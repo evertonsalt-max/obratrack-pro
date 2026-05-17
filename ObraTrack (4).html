@@ -1,0 +1,2204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ObraTrack Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;overflow:hidden}
+body{font-family:'DM Sans',sans-serif}
+input,select,textarea,button{font-family:'DM Sans',sans-serif;outline:none}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:#475569;border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+input[type=date]::-webkit-calendar-picker-indicator,
+input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.5);cursor:pointer}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:.4}50%{transform:scale(1.2);opacity:.1}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+@keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+@media print{.noprint{display:none!important};body{overflow:visible}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useRef,useEffect,useCallback,useMemo}=React;
+
+/* ══════════════════════════════════════════════════════
+   PERSISTÊNCIA — localStorage com auto-save
+══════════════════════════════════════════════════════ */
+const LS_KEY='obratrack_v3';
+
+function salvarStorage(dados){
+  try{localStorage.setItem(LS_KEY,JSON.stringify({...dados,_saved:new Date().toISOString()}));}
+  catch(e){console.warn('localStorage indisponível',e);}
+}
+function carregarStorage(){
+  try{const r=localStorage.getItem(LS_KEY);return r?JSON.parse(r):null;}
+  catch{return null;}
+}
+function exportarBackupJSON(dados){
+  const blob=new Blob([JSON.stringify({...dados,_backup:new Date().toISOString()},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`obratrack-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();
+}
+function importarBackupJSON(file,cb){
+  const r=new FileReader();
+  r.onload=e=>{try{cb(JSON.parse(e.target.result));}catch{alert('Arquivo inválido.');}};
+  r.readAsText(file);
+}
+
+/* ══════════════════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════════════════ */
+const hoje  = new Date().toISOString().split('T')[0];
+const ontem = new Date(Date.now()-864e5).toISOString().split('T')[0];
+const d2    = new Date(Date.now()-2*864e5).toISOString().split('T')[0];
+const d3    = new Date(Date.now()-3*864e5).toISOString().split('T')[0];
+const d4    = new Date(Date.now()-4*864e5).toISOString().split('T')[0];
+const d5    = new Date(Date.now()-5*864e5).toISOString().split('T')[0];
+const fmtBR = d=>{try{return new Date(d+'T12:00:00').toLocaleDateString('pt-BR');}catch{return d;}};
+const fmtR$ = v=>'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2});
+const calcH = (e,s)=>{if(!e||!s)return 0;const[eh,em]=e.split(':').map(Number),[sh,sm]=s.split(':').map(Number);return +((sh*60+sm-eh*60-em)/60).toFixed(1);};
+const uid   = ()=>Date.now()+Math.random().toString(36).slice(2);
+
+/* ══════════════════════════════════════════════════════
+   DADOS DEMO
+══════════════════════════════════════════════════════ */
+const FUNC0=[
+  {id:1,nome:'João Silva',    apelido:'João',  ini:'JS',funcao:'Pedreiro',   diaria:180,status:'ativo',  tel:'(11)99999-1111',adm:'2024-03-01'},
+  {id:2,nome:'Pedro Oliveira',apelido:'Pedro', ini:'PO',funcao:'Servente',   diaria:150,status:'ativo',  tel:'(11)99999-2222',adm:'2024-01-15'},
+  {id:3,nome:'Carlos Souza',  apelido:'Carlos',ini:'CS',funcao:'Carpinteiro',diaria:200,status:'ativo',  tel:'(11)99999-3333',adm:'2023-11-10'},
+  {id:4,nome:'Marcos Lima',   apelido:'Marcos',ini:'ML',funcao:'Eletricista',diaria:220,status:'inativo',tel:'(11)99999-4444',adm:'2023-08-20'},
+  {id:5,nome:'Rafael Costa',  apelido:'Rafael',ini:'RC',funcao:'Encanador',  diaria:190,status:'ativo',  tel:'(11)99999-5555',adm:'2024-05-01'},
+];
+const OBRAS0=['Condomínio Vista Alegre','Obra Rua São Paulo','Residencial das Flores','Comercial Centro'];
+const REG0=[
+  {id:1,funcId:1,nome:'João',  data:hoje, local:'Condomínio Vista Alegre',jornada:'DIA_INTEIRO',entrada:'07:00',saida:'17:00',horas:10,diaria:180,vale:true, valorVale:100,obs:''},
+  {id:2,funcId:2,nome:'Pedro', data:hoje, local:'Obra Rua São Paulo',     jornada:'DIA_INTEIRO',entrada:'07:30',saida:'17:30',horas:10,diaria:150,vale:false,valorVale:0,  obs:''},
+  {id:3,funcId:3,nome:'Carlos',data:ontem,local:'Residencial das Flores', jornada:'DIA_INTEIRO',entrada:'08:00',saida:'18:00',horas:10,diaria:200,vale:true, valorVale:150,obs:'Horas extras'},
+  {id:4,funcId:5,nome:'Rafael',data:ontem,local:'Comercial Centro',       jornada:'MEIO_TURNO', entrada:'07:00',saida:'12:00',horas:5, diaria:190,vale:false,valorVale:0,  obs:''},
+  {id:5,funcId:1,nome:'João',  data:d2,   local:'Condomínio Vista Alegre',jornada:'DIA_INTEIRO',entrada:'07:00',saida:'17:00',horas:10,diaria:180,vale:false,valorVale:0,  obs:''},
+  {id:6,funcId:2,nome:'Pedro', data:d2,   local:'Obra Rua São Paulo',     jornada:'MEIO_TURNO', entrada:'07:30',saida:'12:30',horas:5, diaria:150,vale:false,valorVale:0,  obs:''},
+  {id:7,funcId:3,nome:'Carlos',data:d3,   local:'Residencial das Flores', jornada:'OUTRO',      entrada:'08:00',saida:'14:00',horas:6, diaria:200,vale:true, valorVale:100,obs:'Saiu mais cedo — consulta médica'},
+  {id:8,funcId:5,nome:'Rafael',data:d4,   local:'Comercial Centro',       jornada:'DIA_INTEIRO',entrada:'07:00',saida:'17:00',horas:10,diaria:190,vale:false,valorVale:0,  obs:''},
+];
+const PAG0=[
+  {id:1,funcId:1,nome:'João',  data:d5,valor:540,tipo:'Semanal',  obs:'Semana 19'},
+  {id:2,funcId:2,nome:'Pedro', data:d5,valor:450,tipo:'Semanal',  obs:'Semana 19'},
+  {id:3,funcId:3,nome:'Carlos',data:d4,valor:800,tipo:'Quinzenal',obs:'Adiantamento'},
+  {id:4,funcId:5,nome:'Rafael',data:d3,valor:380,tipo:'Semanal',  obs:'Semana 19'},
+];
+
+/* ══════════════════════════════════════════════════════
+   TEMAS
+══════════════════════════════════════════════════════ */
+const DK={bg:'#0d0f14',sb:'#111318',card:'#171b24',brd:'#1e2535',txt:'#eef0f6',sub:'#6b7a99',ac:'#3b82f6',ok:'#22c55e',warn:'#f59e0b',err:'#ef4444',pur:'#8b5cf6',hov:'#1a2030',inp:'#0d0f14',inpB:'#252d40',row:'#161c28',bdg:'#1e2535',name:'dark'};
+const LT={bg:'#f0f4f8',sb:'#ffffff',card:'#ffffff',brd:'#e2e8f0',txt:'#0f172a',sub:'#64748b',ac:'#2563eb',ok:'#16a34a',warn:'#d97706',err:'#dc2626',pur:'#7c3aed',hov:'#f8fafc',inp:'#f8fafc',inpB:'#cbd5e1',row:'#f8fafc',bdg:'#f1f5f9',name:'light'};
+
+/* ══════════════════════════════════════════════════════
+   ÍCONES
+══════════════════════════════════════════════════════ */
+const SVGS={
+  home:    <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>,
+  users:   <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  clock:   <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
+  dollar:  <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>,
+  chart:   <><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>,
+  plus:    <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+  edit:    <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
+  trash:   <><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
+  x:       <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+  check:   <polyline points="20 6 9 17 4 12"/>,
+  search:  <><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
+  sun:     <><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>,
+  moon:    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>,
+  bell:    <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
+  dl:      <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
+  mic:     <><path d="M12 1a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V4a3 3 0 0 1 3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></>,
+  layers:  <><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>,
+  alert:   <><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12.01" y1="17" x2="12.01" y2="17"/></>,
+  cL:      <polyline points="15 18 9 12 15 6"/>,
+  cR:      <polyline points="9 18 15 12 9 6"/>,
+  pin:     <><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></>,
+  up:      <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>,
+  print:   <><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></>,
+  stop:    <rect x="6" y="6" width="12" height="12"/>,
+  save:    <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>,
+  shield:  <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+  backup:  <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>,
+  log:     <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></>,
+  setting: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
+  import:  <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>,
+  table:   <><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></>,
+  warn2:   <><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></>,
+  eye:     <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>,
+  refresh: <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>,
+};
+const Ic=({n,s=18,c='currentColor'})=>(
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>{SVGS[n]}</svg>
+);
+
+/* ══════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+══════════════════════════════════════════════════════ */
+function Toast({toasts}){
+  return(
+    <div style={{position:'fixed',bottom:24,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8}}>
+      {toasts.map(toast=>(
+        <div key={toast.id} style={{background:toast.type==='ok'?'#166534':toast.type==='err'?'#7f1d1d':'#1e3a5f',border:`1px solid ${toast.type==='ok'?'#22c55e':toast.type==='err'?'#ef4444':'#3b82f6'}`,borderRadius:10,padding:'12px 18px',color:'#fff',fontSize:13,fontWeight:600,display:'flex',alignItems:'center',gap:10,animation:'toastIn .3s ease',boxShadow:'0 8px 30px rgba(0,0,0,.4)',minWidth:240}}>
+          <Ic n={toast.type==='ok'?'check':toast.type==='err'?'alert':'save'} s={16} c={toast.type==='ok'?'#4ade80':toast.type==='err'?'#fca5a5':'#93c5fd'}/>
+          {toast.msg}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   GRÁFICOS SVG
+══════════════════════════════════════════════════════ */
+function BarChart({data,cor1,cor2,t,h=200}){
+  if(!data||!data.length)return null;
+  const maxV=Math.max(...data.map(d=>Math.max(d.v1||0,d.v2||0)),1);
+  const W=100,padY=h-20,barH=h-50;
+  return(
+    <svg viewBox={`0 0 ${data.length*W+40} ${h}`} style={{width:'100%',height:h,overflow:'visible'}}>
+      {[0,.5,1].map((f,i)=>(
+        <g key={i}>
+          <line x1="36" x2={data.length*W+36} y1={padY-barH*f} y2={padY-barH*f} stroke={t.brd} strokeDasharray="3 3"/>
+          <text x="30" y={padY-barH*f+4} textAnchor="end" fontSize="10" fill={t.sub}>{fmtR$(maxV*f).replace('R$ ','')}</text>
+        </g>
+      ))}
+      {data.map((d,i)=>{
+        const cx=i*W+80;const bw=28;
+        const h1=barH*(d.v1||0)/maxV,h2=barH*(d.v2||0)/maxV;
+        return(
+          <g key={i}>
+            <rect x={cx-bw-2} y={padY-h1} width={bw} height={h1} rx="3" fill={cor1} fillOpacity=".85"/>
+            {cor2&&<rect x={cx+2} y={padY-h2} width={bw} height={h2} rx="3" fill={cor2} fillOpacity=".85"/>}
+            <text x={cx} y={h-4} textAnchor="middle" fontSize="10" fill={t.sub}>{d.label}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function AreaChart({data,cor,t,h=180}){
+  if(!data||!data.length)return null;
+  const maxV=Math.max(...data.map(d=>d.v),1);
+  const W=560,pad=40,botY=h-20,topY=20;
+  const pts=data.map((d,i)=>{
+    const x=pad+(W-pad*2)*i/Math.max(data.length-1,1);
+    const y=botY-(botY-topY)*(d.v/maxV);
+    return[x,y];
+  });
+  const pathD=pts.map((p,i)=>i===0?`M${p[0]},${p[1]}`:`L${p[0]},${p[1]}`).join(' ');
+  const areaD=pts.length?`${pathD} L${pts[pts.length-1][0]},${botY} L${pts[0][0]},${botY} Z`:'';
+  return(
+    <svg viewBox={`0 0 ${W} ${h}`} style={{width:'100%',height:h}}>
+      <defs><linearGradient id={`ag${cor.replace('#','')}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={cor} stopOpacity=".3"/><stop offset="100%" stopColor={cor} stopOpacity="0"/></linearGradient></defs>
+      {[0,.5,1].map((f,i)=><line key={i} x1={pad} x2={W-10} y1={botY-(botY-topY)*f} y2={botY-(botY-topY)*f} stroke={t.brd} strokeDasharray="3 3"/>)}
+      {areaD&&<path d={areaD} fill={`url(#ag${cor.replace('#','')})`}/>}
+      {pts.length>1&&<path d={pathD} fill="none" stroke={cor} strokeWidth="2.5"/>}
+      {pts.map((p,i)=>(
+        <g key={i}>
+          <circle cx={p[0]} cy={p[1]} r="3.5" fill={cor}/>
+          <text x={p[0]} y={h-4} textAnchor="middle" fontSize="9" fill={t.sub}>{data[i].label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function PieDonut({data,t}){
+  if(!data||!data.length)return<p style={{color:t.sub,fontSize:12,padding:20}}>Sem dados</p>;
+  const total=data.reduce((s,d)=>s+d.v,0)||1;
+  const CORS=['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#ec4899'];
+  let ang=-Math.PI/2;
+  const slices=data.map((d,i)=>{
+    const a=(d.v/total)*2*Math.PI;
+    const s=ang;ang+=a;
+    const x1=70+60*Math.cos(s),y1=70+60*Math.sin(s),x2=70+60*Math.cos(ang),y2=70+60*Math.sin(ang);
+    return{d:`M70,70 L${x1},${y1} A60,60 0 ${a>Math.PI?1:0},1 ${x2},${y2} Z`,cor:CORS[i%CORS.length],label:d.label,v:d.v,pct:Math.round(d.v/total*100)};
+  });
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:20,flexWrap:'wrap'}}>
+      <svg viewBox="0 0 140 140" style={{width:140,height:140,flexShrink:0}}>
+        {slices.map((s,i)=><path key={i} d={s.d} fill={s.cor} stroke={t.card} strokeWidth="2"/>)}
+        <circle cx="70" cy="70" r="32" fill={t.card}/>
+        <text x="70" y="74" textAnchor="middle" fontSize="11" fontWeight="700" fill={t.txt}>{slices.length}</text>
+        <text x="70" y="84" textAnchor="middle" fontSize="8" fill={t.sub}>obras</text>
+      </svg>
+      <div style={{flex:1,minWidth:120}}>
+        {slices.map((s,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'center',gap:7,marginBottom:5}}>
+            <div style={{width:8,height:8,borderRadius:2,background:s.cor,flexShrink:0}}/>
+            <span style={{color:t.sub,fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.label}</span>
+            <span style={{color:t.txt,fontSize:11,fontWeight:700}}>{s.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   EXPORT XLSX
+══════════════════════════════════════════════════════ */
+function exportXLSX(regs,funcs,pags){
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,Object.assign(XLSX.utils.aoa_to_sheet([
+    ['Funcionário','Data','Jornada','Local','Entrada','Saída','Horas','Diária R$','Vale?','Valor Vale R$','Saldo R$','Obs'],
+    ...regs.map(r=>[r.nome,fmtBR(r.data),(JORNADAS[r.jornada||'DIA_INTEIRO']||JORNADAS.DIA_INTEIRO).label,r.local,r.entrada||'—',r.saida||'—',r.horas||0,r.diaria,r.vale?'Sim':'Não',r.valorVale||0,(r.diaria||0)-(r.valorVale||0),r.obs||''])
+  ]),{'!cols':[16,12,14,26,8,8,7,12,6,13,10,20].map(w=>({wch:w}))}),'Registros');
+  const por={};
+  regs.forEach(r=>{if(!por[r.funcId])por[r.funcId]={n:r.nome,d:0,h:0,b:0,v:0};por[r.funcId].d++;por[r.funcId].h+=r.horas||0;por[r.funcId].b+=r.diaria||0;por[r.funcId].v+=r.valorVale||0;});
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Funcionário','Dias','Horas','Bruto R$','Vales R$','Saldo R$'],...Object.values(por).map(p=>[p.n,p.d,p.h.toFixed(1),p.b,p.v,p.b-p.v])]),'Resumo');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Funcionário','Data','Valor R$','Tipo','Obs'],...pags.map(p=>[p.nome,fmtBR(p.data),p.valor,p.tipo,p.obs||''])]),'Pagamentos');
+  XLSX.writeFile(wb,`obratrack-${hoje}.xlsx`);
+}
+
+/* ══════════════════════════════════════════════════════
+   COMPONENTES BASE
+══════════════════════════════════════════════════════ */
+function Av({ini,size=36,cor='#3b82f6'}){
+  return<div style={{width:size,height:size,borderRadius:'50%',background:cor+'28',border:`2px solid ${cor}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:size*.3,fontWeight:800,color:cor,flexShrink:0,letterSpacing:-.5}}>{ini}</div>;
+}
+
+function Bdg({children,cor='blue',t}){
+  const M={blue:{bg:t.ac+'22',c:t.ac},green:{bg:t.ok+'22',c:t.ok},red:{bg:t.err+'22',c:t.err},yellow:{bg:t.warn+'22',c:t.warn},purple:{bg:t.pur+'22',c:t.pur},gray:{bg:t.bdg,c:t.sub}};
+  const{bg,c}=M[cor]||M.blue;
+  return<span style={{background:bg,color:c,padding:'2px 9px',borderRadius:20,fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>{children}</span>;
+}
+
+function Btn({children,onClick,v='primary',icon,size='md',disabled,t,sx={}}){
+  const b={border:'none',cursor:disabled?'not-allowed':'pointer',borderRadius:8,fontWeight:600,display:'inline-flex',alignItems:'center',gap:6,opacity:disabled?.5:1,transition:'opacity .15s'};
+  const sz={sm:{padding:'5px 12px',fontSize:12},md:{padding:'8px 16px',fontSize:13},lg:{padding:'11px 22px',fontSize:14}};
+  const vs={primary:{background:t.ac,color:'#fff'},secondary:{background:t.card,color:t.txt,border:`1px solid ${t.brd}`},danger:{background:t.err,color:'#fff'},ghost:{background:'transparent',color:t.sub,border:`1px solid ${t.brd}`},success:{background:t.ok,color:'#fff'},warn:{background:t.warn,color:'#fff'}};
+  const s={...b,...sz[size],...vs[v],...sx};
+  return<button onClick={disabled?undefined:onClick} style={s}>{icon&&<Ic n={icon} s={14} c={vs[v]?.color||'#fff'}/>}{children}</button>;
+}
+
+function Crd({children,t,sx={},title,action,noPad}){
+  return(
+    <div style={{background:t.card,border:`1px solid ${t.brd}`,borderRadius:12,padding:noPad?0:'20px 24px',animation:'fadeIn .2s ease',...sx}}>
+      {title&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,padding:noPad?'18px 20px 0':0}}>
+        <h3 style={{color:t.txt,fontSize:14,fontWeight:700}}>{title}</h3>{action}
+      </div>}
+      {children}
+    </div>
+  );
+}
+
+function Mdl({title,onClose,children,t,w=560}){
+  return(
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.72)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div style={{background:t.card,border:`1px solid ${t.brd}`,borderRadius:16,width:'100%',maxWidth:w,maxHeight:'92vh',overflowY:'auto',boxShadow:'0 32px 80px rgba(0,0,0,.5)',animation:'fadeIn .2s ease'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px 22px',borderBottom:`1px solid ${t.brd}`,position:'sticky',top:0,background:t.card,zIndex:1}}>
+          <h2 style={{color:t.txt,fontSize:16,fontWeight:700}}>{title}</h2>
+          <button onClick={onClose} style={{background:t.hov,border:'none',borderRadius:8,padding:'6px 8px',cursor:'pointer',color:t.sub,display:'flex'}}><Ic n="x" s={16} c={t.sub}/></button>
+        </div>
+        <div style={{padding:'20px 22px'}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Inp({label,t,sx={},...props}){
+  return(
+    <div style={{marginBottom:14}}>
+      {label&&<label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>{label}</label>}
+      <input {...props} style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,boxSizing:'border-box',...sx}}/>
+    </div>
+  );
+}
+
+function Slt({label,t,children,...props}){
+  return(
+    <div style={{marginBottom:14}}>
+      {label&&<label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>{label}</label>}
+      <select {...props} style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,boxSizing:'border-box',appearance:'none'}}>{children}</select>
+    </div>
+  );
+}
+
+function Tbl({cols,rows,t,empty='Nenhum registro'}){
+  return(
+    <div style={{overflowX:'auto'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+        <thead>
+          <tr style={{borderBottom:`2px solid ${t.brd}`}}>
+            {cols.map((c,i)=><th key={i} style={{padding:'10px 14px',textAlign:c.ct?'center':'left',color:t.sub,fontWeight:700,fontSize:11,textTransform:'uppercase',letterSpacing:.5,whiteSpace:'nowrap'}}>{c.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length===0
+            ?<tr><td colSpan={cols.length} style={{textAlign:'center',padding:'52px 0',color:t.sub,fontSize:13}}>{empty}</td></tr>
+            :rows.map((row,ri)=>(
+              <tr key={ri} style={{borderBottom:`1px solid ${t.brd}`,background:ri%2===1?t.row:'transparent',transition:'background .1s'}}
+                onMouseEnter={e=>e.currentTarget.style.background=t.hov}
+                onMouseLeave={e=>e.currentTarget.style.background=ri%2===1?t.row:'transparent'}>
+                {cols.map((c,ci)=><td key={ci} style={{padding:'11px 14px',color:t.txt,textAlign:c.ct?'center':'left',verticalAlign:'middle'}}>{c.fn?c.fn(row):row[c.key]}</td>)}
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Stat({label,value,icon,cor,sub,t,onClick}){
+  return(
+    <Crd t={t} sx={{padding:'18px 20px',cursor:onClick?'pointer':'default'}} onClick={onClick}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div>
+          <p style={{color:t.sub,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>{label}</p>
+          <p style={{color:t.txt,fontSize:22,fontWeight:800,lineHeight:1}}>{value}</p>
+          {sub&&<p style={{color:t.sub,fontSize:11,marginTop:5}}>{sub}</p>}
+        </div>
+        <div style={{background:cor+'18',borderRadius:10,padding:10}}><Ic n={icon} s={20} c={cor}/></div>
+      </div>
+    </Crd>
+  );
+}
+
+function Pag({total,atual,set,t,totalReg}){
+  if(total<=1)return null;
+  return(
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:14,paddingTop:14,borderTop:`1px solid ${t.brd}`}}>
+      <p style={{color:t.sub,fontSize:12}}>{totalReg} registros · Pág. {atual}/{total}</p>
+      <div style={{display:'flex',gap:4}}>
+        <button disabled={atual===1} onClick={()=>set(p=>p-1)} style={{background:'transparent',border:`1px solid ${t.brd}`,borderRadius:7,padding:'5px 9px',cursor:atual===1?'default':'pointer',color:t.sub,opacity:atual===1?.4:1,display:'flex'}}><Ic n="cL" s={14} c={t.sub}/></button>
+        {Array.from({length:total},(_,i)=>i+1).filter(n=>n===1||n===total||Math.abs(n-atual)<=1).reduce((acc,n,i,arr)=>{
+          if(i>0&&arr[i-1]!==n-1)acc.push(<span key={'d'+n} style={{color:t.sub,padding:'5px 2px',fontSize:12}}>…</span>);
+          acc.push(<button key={n} onClick={()=>set(n)} style={{background:atual===n?t.ac:'transparent',border:`1px solid ${atual===n?t.ac:t.brd}`,borderRadius:7,padding:'5px 10px',cursor:'pointer',color:atual===n?'#fff':t.sub,fontSize:12,fontWeight:atual===n?700:400}}>{n}</button>);
+          return acc;
+        },[])}
+        <button disabled={atual===total} onClick={()=>set(p=>p+1)} style={{background:'transparent',border:`1px solid ${t.brd}`,borderRadius:7,padding:'5px 9px',cursor:atual===total?'default':'pointer',color:t.sub,opacity:atual===total?.4:1,display:'flex'}}><Ic n="cR" s={14} c={t.sub}/></button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════════════════ */
+function Sidebar({pg,setPg,t,dark,setDark,col,setCol,ultimoSave}){
+  const nav=[
+    {k:'dash',   ic:'home',  lb:'Dashboard'},
+    {k:'funcs',  ic:'users', lb:'Funcionários'},
+    {k:'horas',  ic:'clock', lb:'Horários'},
+    {k:'pags',   ic:'dollar',lb:'Pagamentos'},
+    {k:'rels',   ic:'chart', lb:'Relatórios'},
+    {k:'audio',  ic:'mic',   lb:'Reg. Áudio'},
+    {k:'obras',  ic:'pin',   lb:'Obras'},
+    {k:'import', ic:'import',lb:'Importar Planilha'},
+    {k:'config', ic:'setting',lb:'Config. & Backup'},
+  ];
+  const w=col?62:224;
+  return(
+    <div className="noprint" style={{width:w,minHeight:'100vh',background:t.sb,borderRight:`1px solid ${t.brd}`,display:'flex',flexDirection:'column',transition:'width .2s',flexShrink:0,overflow:'hidden'}}>
+      <div style={{padding:'14px',borderBottom:`1px solid ${t.brd}`,display:'flex',alignItems:'center',gap:10,height:56,overflow:'hidden'}}>
+        <div style={{width:30,height:30,background:'linear-gradient(135deg,#3b82f6,#8b5cf6)',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <Ic n="layers" s={15} c="#fff"/>
+        </div>
+        {!col&&<div><p style={{color:t.txt,fontWeight:800,fontSize:14,lineHeight:1,whiteSpace:'nowrap'}}>ObraTrack</p><p style={{color:t.sub,fontSize:10,whiteSpace:'nowrap'}}>Pro v3</p></div>}
+      </div>
+      <nav style={{flex:1,padding:'10px 7px',overflowY:'auto'}}>
+        {nav.map(item=>{
+          const at=pg===item.k;
+          return(
+            <button key={item.k} onClick={()=>setPg(item.k)} title={col?item.lb:''}
+              style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'9px 10px',borderRadius:9,border:'none',cursor:'pointer',marginBottom:2,background:at?t.ac+'18':'transparent',color:at?t.ac:t.sub,fontWeight:at?700:500,fontSize:13,textAlign:'left',whiteSpace:'nowrap',overflow:'hidden',transition:'background .1s'}}>
+              <Ic n={item.ic} s={17} c={at?t.ac:t.sub}/>
+              {!col&&<span style={{flex:1}}>{item.lb}</span>}
+              {at&&!col&&<div style={{width:3,height:16,background:t.ac,borderRadius:2}}/>}
+            </button>
+          );
+        })}
+      </nav>
+      {!col&&ultimoSave&&(
+        <div style={{padding:'8px 14px',borderTop:`1px solid ${t.brd}`,marginBottom:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <Ic n="shield" s={11} c={t.ok}/>
+            <p style={{color:t.ok,fontSize:10,fontWeight:600}}>Auto-salvo</p>
+          </div>
+          <p style={{color:t.sub,fontSize:9,marginTop:2}}>{new Date(ultimoSave).toLocaleTimeString('pt-BR')}</p>
+        </div>
+      )}
+      <div style={{padding:'8px 7px',borderTop:`1px solid ${t.brd}`}}>
+        <button onClick={()=>setDark(d=>!d)} title={dark?'Modo Claro':'Modo Escuro'}
+          style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:9,border:'none',cursor:'pointer',background:'transparent',color:t.sub,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',marginBottom:3}}>
+          <Ic n={dark?'sun':'moon'} s={16} c={t.sub}/>{!col&&<span>{dark?'Modo Claro':'Escuro'}</span>}
+        </button>
+        <button onClick={()=>setCol(c=>!c)}
+          style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:9,border:'none',cursor:'pointer',background:'transparent',color:t.sub,fontSize:13,whiteSpace:'nowrap',overflow:'hidden'}}>
+          <Ic n={col?'cR':'cL'} s={16} c={t.sub}/>{!col&&<span>Recolher</span>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   TOPBAR
+══════════════════════════════════════════════════════ */
+function Topbar({t,pg,busca,setBusca}){
+  const tits={dash:'Dashboard',funcs:'Funcionários',horas:'Horários',pags:'Pagamentos',rels:'Relatórios',audio:'Reg. Áudio',obras:'Obras',import:'Importar Planilha',config:'Configurações & Backup'};
+  return(
+    <div className="noprint" style={{height:56,background:t.sb,borderBottom:`1px solid ${t.brd}`,display:'flex',alignItems:'center',padding:'0 22px',gap:14,flexShrink:0}}>
+      <h1 style={{color:t.txt,fontSize:16,fontWeight:700,minWidth:180,whiteSpace:'nowrap'}}>{tits[pg]||''}</h1>
+      <div style={{display:'flex',alignItems:'center',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'0 10px',gap:7,flex:1,maxWidth:360}}>
+        <Ic n="search" s={14} c={t.sub}/>
+        <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Pesquisar em qualquer tela..."
+          style={{border:'none',background:'transparent',color:t.txt,fontSize:13,flex:1,padding:'7px 0'}}/>
+        {busca&&<button onClick={()=>setBusca('')} style={{background:'none',border:'none',cursor:'pointer',color:t.sub,display:'flex'}}><Ic n="x" s={13} c={t.sub}/></button>}
+      </div>
+      <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:14}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',background:t.ok+'14',border:`1px solid ${t.ok}30`,borderRadius:8}}>
+          <div style={{width:7,height:7,borderRadius:'50%',background:t.ok}}/>
+          <span style={{color:t.ok,fontSize:11,fontWeight:700}}>Dados salvos</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:9,cursor:'pointer'}}>
+          <Av ini="AD" size={30} cor={t.ac}/>
+          <div><p style={{color:t.txt,fontSize:12,fontWeight:700,lineHeight:1.2}}>Administrador</p><p style={{color:t.sub,fontSize:10}}>admin@obratrack.com</p></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   DASHBOARD
+══════════════════════════════════════════════════════ */
+function Dashboard({funcs,regs,pags,t,setPg}){
+  const ativos=funcs.filter(f=>f.status==='ativo').length;
+  const rHoje=regs.filter(r=>r.data===hoje).length;
+  const bruto=regs.reduce((s,r)=>s+(r.diaria||0),0);
+  const vales=regs.reduce((s,r)=>s+(r.valorVale||0),0);
+  const pago=pags.reduce((s,p)=>s+(p.valor||0),0);
+  const aberto=Math.max(0,bruto-vales-pago);
+
+  // Dados 7 dias para gráfico de área
+  const dias7=Array.from({length:7},(_,i)=>{
+    const d=new Date(Date.now()-(6-i)*864e5);
+    const iso=d.toISOString().split('T')[0];
+    return{label:d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'}),v:regs.filter(r=>r.data===iso).reduce((s,r)=>s+(r.diaria||0),0)};
+  });
+
+  // Bar por funcionário
+  const barFuncs=funcs.filter(f=>f.status==='ativo').map(f=>({
+    label:f.apelido||f.nome.split(' ')[0],
+    v1:regs.filter(r=>r.funcId===f.id).reduce((s,r)=>s+(r.diaria||0),0),
+    v2:regs.filter(r=>r.funcId===f.id).reduce((s,r)=>s+(r.valorVale||0),0),
+  }));
+
+  // Pizza obras
+  const porObra={};
+  regs.forEach(r=>{porObra[r.local]=(porObra[r.local]||0)+(r.diaria||0);});
+  const pizza=Object.entries(porObra).map(([label,v])=>({label,v}));
+
+  // Saldos pendentes
+  const saldos=funcs.filter(f=>f.status==='ativo').map(f=>{
+    const b=regs.filter(r=>r.funcId===f.id).reduce((s,r)=>s+(r.diaria||0),0);
+    const v=regs.filter(r=>r.funcId===f.id).reduce((s,r)=>s+(r.valorVale||0),0);
+    const p=pags.filter(pg=>pg.funcId===f.id).reduce((s,pg)=>s+(pg.valor||0),0);
+    return{...f,saldo:b-v-p,bruto:b};
+  }).filter(f=>f.saldo>0).sort((a,b)=>b.saldo-a.saldo);
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      {/* KPIs */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:22}}>
+        <Stat label="Funcionários Ativos" value={ativos}      icon="users"  cor={t.ac}   sub={`${funcs.length} cadastrados`} t={t} onClick={()=>setPg('funcs')}/>
+        <Stat label="Registros Hoje"      value={rHoje}       icon="clock"  cor={t.pur}  sub="dias trabalhados" t={t} onClick={()=>setPg('horas')}/>
+        <Stat label="Total Bruto"         value={fmtR$(bruto)}icon="dollar" cor={t.ok}   sub="todas as diárias" t={t}/>
+        <Stat label="Em Aberto"           value={fmtR$(aberto)}icon="alert" cor={t.warn} sub="a pagar ainda" t={t} onClick={()=>setPg('pags')}/>
+      </div>
+
+      {/* Gráficos linha 1 */}
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:14}}>
+        <Crd t={t} title="Diárias — Últimos 7 dias" action={<Bdg cor="blue" t={t}>acumulado</Bdg>}>
+          <AreaChart data={dias7} cor={t.ac} t={t}/>
+        </Crd>
+        <Crd t={t} title="Gastos por Obra">
+          <PieDonut data={pizza} t={t}/>
+        </Crd>
+      </div>
+
+      {/* Gráfico barras + cards */}
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:14}}>
+        <Crd t={t} title="Bruto × Vales por Funcionário">
+          <div style={{display:'flex',gap:12,marginBottom:8}}>
+            {[{cor:t.ac,lb:'Bruto'},{cor:t.warn,lb:'Vales'}].map((l,i)=>(
+              <div key={i} style={{display:'flex',alignItems:'center',gap:5}}>
+                <div style={{width:10,height:10,borderRadius:2,background:l.cor}}/>
+                <span style={{color:t.sub,fontSize:11}}>{l.lb}</span>
+              </div>
+            ))}
+          </div>
+          <BarChart data={barFuncs} cor1={t.ac} cor2={t.warn} t={t}/>
+        </Crd>
+
+        {/* Resumo financeiro */}
+        <Crd t={t} title="Resumo Financeiro">
+          {[
+            {l:'Total Diárias',v:bruto,c:t.txt},
+            {l:'Total Vales',  v:vales,c:t.warn},
+            {l:'Total Pago',   v:pago, c:t.ok},
+            {l:'Saldo Aberto', v:aberto,c:t.err},
+          ].map((item,i,arr)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:i<arr.length-1?`1px solid ${t.brd}`:'none'}}>
+              <span style={{color:t.sub,fontSize:12}}>{item.l}</span>
+              <span style={{color:item.c,fontWeight:700,fontSize:13}}>{fmtR$(item.v)}</span>
+            </div>
+          ))}
+          <div style={{marginTop:14,padding:'12px 14px',background:t.ok+'12',border:`1px solid ${t.ok}30`,borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{color:t.ok,fontSize:12,fontWeight:700}}>TOTAL PAGO / BRUTO</span>
+            <span style={{color:t.ok,fontSize:13,fontWeight:800}}>{bruto>0?Math.round(((vales+pago)/bruto)*100):0}%</span>
+          </div>
+        </Crd>
+      </div>
+
+      {/* Tabelas */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+        <Crd t={t} title="Pagamentos Pendentes" action={<Btn size="sm" v="ghost" t={t} onClick={()=>setPg('pags')}>Ver todos</Btn>}>
+          {saldos.length===0?<p style={{color:t.sub,fontSize:13,padding:'16px 0'}}>Nenhum saldo pendente. ✓</p>
+            :saldos.slice(0,5).map((f,i,arr)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:i<arr.length-1?`1px solid ${t.brd}`:'none'}}>
+                <div style={{display:'flex',alignItems:'center',gap:9}}>
+                  <Av ini={f.ini||f.nome.slice(0,2).toUpperCase()} size={32} cor={t.warn}/>
+                  <div><p style={{color:t.txt,fontSize:13,fontWeight:600}}>{f.apelido||f.nome}</p><p style={{color:t.sub,fontSize:11}}>Bruto: {fmtR$(f.bruto)}</p></div>
+                </div>
+                <Bdg cor="yellow" t={t}>{fmtR$(f.saldo)}</Bdg>
+              </div>
+            ))
+          }
+        </Crd>
+        <Crd t={t} title="Últimos Registros" action={<Btn size="sm" v="ghost" t={t} onClick={()=>setPg('horas')}>Ver todos</Btn>}>
+          {regs.slice(-5).reverse().map((r,i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:i<4?`1px solid ${t.brd}`:'none'}}>
+              <div><p style={{color:t.txt,fontSize:13,fontWeight:600}}>{r.nome}</p><p style={{color:t.sub,fontSize:11}}>{r.local} · {fmtBR(r.data)}</p></div>
+              <div style={{textAlign:'right'}}>
+                <p style={{color:t.ok,fontSize:13,fontWeight:700}}>{fmtR$(r.diaria)}</p>
+                {r.vale&&<p style={{color:t.warn,fontSize:11}}>Vale: {fmtR$(r.valorVale)}</p>}
+              </div>
+            </div>
+          ))}
+        </Crd>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   FUNCIONÁRIOS
+══════════════════════════════════════════════════════ */
+function Funcs({funcs,setFuncs,regs,busca,t,toast}){
+  const [mdl,setMdl]=useState(null);
+  const [del,setDel]=useState(null);
+  const [fil,setFil]=useState('todos');
+  const vazio={nome:'',apelido:'',tel:'',funcao:'',diaria:'',status:'ativo',adm:hoje};
+  const [form,setForm]=useState(vazio);
+  const up=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+  const CORS=['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#ec4899'];
+  const cor=id=>CORS[id%CORS.length];
+
+  const abrirNovo=()=>{setForm(vazio);setMdl('new');};
+  const abrirEd=f=>{setForm({...f,diaria:String(f.diaria)});setMdl(f);};
+  const salvar=()=>{
+    if(!form.nome){toast('Informe o nome.','err');return;}
+    const obj={...form,diaria:Number(form.diaria),ini:form.nome.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)};
+    if(mdl==='new'){setFuncs(p=>[...p,{...obj,id:uid()}]);toast('Funcionário cadastrado!','ok');}
+    else{setFuncs(p=>p.map(f=>f.id===mdl.id?{...f,...obj}:f));toast('Funcionário atualizado!','ok');}
+    setMdl(null);
+  };
+  const confirmarDel=()=>{setFuncs(p=>p.filter(f=>f.id!==del.id));toast('Funcionário removido.','info');setDel(null);};
+
+  const lista=funcs.filter(f=>{
+    const q=busca.toLowerCase();
+    return(!q||(f.nome.toLowerCase().includes(q)||f.funcao.toLowerCase().includes(q)||f.tel?.includes(q)))&&(fil==='todos'||(fil==='ativo'&&f.status==='ativo')||(fil==='inativo'&&f.status==='inativo'));
+  });
+
+  const cols=[
+    {label:'Funcionário',fn:r=>(
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <Av ini={r.ini||r.nome.slice(0,2).toUpperCase()} size={36} cor={cor(typeof r.id==='number'?r.id:parseInt(r.id)||0)}/>
+        <div><p style={{color:t.txt,fontWeight:600,fontSize:13}}>{r.nome}</p><p style={{color:t.sub,fontSize:11}}>{r.apelido&&r.apelido!==r.nome.split(' ')[0]?`"${r.apelido}" · `:''}{r.tel}</p></div>
+      </div>
+    )},
+    {label:'Função',fn:r=><Bdg cor="blue" t={t}>{r.funcao}</Bdg>},
+    {label:'Status',fn:r=><Bdg cor={r.status==='ativo'?'green':'gray'} t={t}>{r.status}</Bdg>},
+    {label:'Diária',fn:r=><span style={{color:t.txt,fontWeight:600}}>{fmtR$(r.diaria)}</span>},
+    {label:'Admissão',fn:r=><span style={{color:t.sub,fontSize:12}}>{fmtBR(r.adm)}</span>},
+    {label:'Dias',fn:r=><span style={{color:t.txt}}>{regs.filter(rg=>rg.funcId===r.id).length}</span>},
+    {label:'Ações',ct:true,fn:r=>(
+      <div style={{display:'flex',gap:6,justifyContent:'center'}}>
+        <button onClick={()=>abrirEd(r)} style={{background:t.ac+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="edit" s={13} c={t.ac}/></button>
+        <button onClick={()=>setDel(r)}  style={{background:t.err+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="trash" s={13} c={t.err}/></button>
+      </div>
+    )},
+  ];
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',gap:6}}>
+          {['todos','ativo','inativo'].map(f=>(
+            <button key={f} onClick={()=>setFil(f)} style={{padding:'6px 14px',borderRadius:8,border:`1px solid ${fil===f?t.ac:t.brd}`,background:fil===f?t.ac+'18':'transparent',color:fil===f?t.ac:t.sub,cursor:'pointer',fontSize:12,fontWeight:fil===f?700:500,textTransform:'capitalize',transition:'all .1s'}}>{f}</button>
+          ))}
+        </div>
+        <Btn icon="plus" t={t} onClick={abrirNovo}>Novo Funcionário</Btn>
+      </div>
+      <Crd t={t} noPad>
+        <Tbl cols={cols} rows={lista} t={t}/>
+      </Crd>
+
+      {mdl&&(
+        <Mdl title={mdl==='new'?'Novo Funcionário':'Editar Funcionário'} onClose={()=>setMdl(null)} t={t}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 18px'}}>
+            <Inp label="Nome Completo *" value={form.nome} onChange={up('nome')} t={t} placeholder="João da Silva"/>
+            <Inp label="Apelido"         value={form.apelido} onChange={up('apelido')} t={t} placeholder="João"/>
+            <Inp label="Telefone"        value={form.tel} onChange={up('tel')} t={t} placeholder="(11) 99999-0000"/>
+            <Inp label="Função"          value={form.funcao} onChange={up('funcao')} t={t} placeholder="Pedreiro"/>
+            <Inp label="Valor Diária (R$)" type="number" value={form.diaria} onChange={up('diaria')} t={t} placeholder="180"/>
+            <Inp label="Data Admissão"   type="date" value={form.adm} onChange={up('adm')} t={t}/>
+          </div>
+          <Slt label="Status" value={form.status} onChange={up('status')} t={t}>
+            <option value="ativo">Ativo</option><option value="inativo">Inativo</option>
+          </Slt>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:4}}>
+            <Btn v="ghost" t={t} onClick={()=>setMdl(null)}>Cancelar</Btn>
+            <Btn t={t} onClick={salvar} icon="check">Salvar</Btn>
+          </div>
+        </Mdl>
+      )}
+      {del&&(
+        <Mdl title="Confirmar Exclusão" onClose={()=>setDel(null)} t={t} w={420}>
+          <div style={{display:'flex',gap:14,alignItems:'flex-start',marginBottom:20}}>
+            <div style={{background:t.err+'18',borderRadius:10,padding:10,flexShrink:0}}><Ic n="alert" s={24} c={t.err}/></div>
+            <div>
+              <p style={{color:t.txt,fontSize:14,fontWeight:700,marginBottom:4}}>Excluir {del.nome}?</p>
+              <p style={{color:t.sub,fontSize:13}}>Esta ação não pode ser desfeita. Os registros de trabalho vinculados serão mantidos.</p>
+            </div>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+            <Btn v="ghost" t={t} onClick={()=>setDel(null)}>Cancelar</Btn>
+            <Btn v="danger" t={t} onClick={confirmarDel} icon="trash">Excluir</Btn>
+          </div>
+        </Mdl>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   HORÁRIOS
+══════════════════════════════════════════════════════ */
+
+// Configuração centralizada dos tipos de jornada
+const JORNADAS={
+  DIA_INTEIRO:{label:'Dia Inteiro',   cor:'#22c55e', corBg:'#22c55e18', icon:'☀️', entrada:'07:00',saida:'17:00',hSugerida:10},
+  MEIO_TURNO: {label:'Meio Turno',    cor:'#f59e0b', corBg:'#f59e0b18', icon:'🌤️', entrada:'07:00',saida:'12:00',hSugerida:5},
+  OUTRO:      {label:'Outro',         cor:'#7c8ba1', corBg:'#7c8ba118', icon:'🕐', entrada:'',     saida:'',     hSugerida:0},
+};
+
+function bdgJornada(j,t){
+  const cfg=JORNADAS[j||'OUTRO']||JORNADAS.OUTRO;
+  return(
+    <span style={{background:cfg.corBg,color:cfg.cor,padding:'2px 9px',borderRadius:20,fontSize:11,fontWeight:700,whiteSpace:'nowrap',border:`1px solid ${cfg.cor}30`}}>
+      {cfg.icon} {cfg.label}
+    </span>
+  );
+}
+
+function Horas({regs,setRegs,funcs,obras,setObras,busca,t,toast}){
+  const [mdl,setMdl]=useState(null);
+  const [del,setDel]=useState(null);
+  const [pag,setPag]=useState(1);
+  const [fF,setFF]=useState('');
+  const [fD,setFD]=useState('');
+  const [fJ,setFJ]=useState(''); // filtro jornada
+
+  const vazio={funcId:'',data:hoje,local:'',jornada:'DIA_INTEIRO',entrada:'07:00',saida:'17:00',vale:false,valorVale:'',obs:''};
+  const [form,setForm]=useState(vazio);
+  const up=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+  const PG=12;
+
+  // Ao mudar tipo de jornada: preencher horários sugeridos automaticamente
+  const mudarJornada=j=>{
+    const cfg=JORNADAS[j];
+    setForm(p=>({
+      ...p,
+      jornada:j,
+      entrada:cfg.entrada||p.entrada,
+      saida:cfg.saida||p.saida,
+      obs: j==='OUTRO' ? p.obs : (p.obs||''),
+    }));
+  };
+
+  const lista=regs.filter(r=>{
+    const qF=!fF||r.funcId===fF||String(r.funcId)===String(fF);
+    const qD=!fD||r.data===fD;
+    const qJ=!fJ||(r.jornada||'DIA_INTEIRO')===fJ;
+    const qB=!busca||(r.nome.toLowerCase().includes(busca.toLowerCase())||r.local.toLowerCase().includes(busca.toLowerCase()));
+    return qF&&qD&&qJ&&qB;
+  }).sort((a,b)=>b.data.localeCompare(a.data));
+
+  const totalP=Math.ceil(lista.length/PG)||1;
+  const paged=lista.slice((pag-1)*PG,pag*PG);
+  const fn=funcs.find(f=>String(f.id)===String(form.funcId));
+
+  const abrirNovo=()=>{setForm(vazio);setMdl('new');};
+  const abrirEd=r=>{
+    setForm({...r,funcId:String(r.funcId),valorVale:String(r.valorVale||''),jornada:r.jornada||'DIA_INTEIRO'});
+    setMdl(r);
+  };
+
+  const salvar=()=>{
+    if(!form.funcId||!form.data||!form.local){toast('Preencha os campos obrigatórios.','err');return;}
+    if(!form.jornada){toast('Selecione o tipo de jornada.','err');return;}
+    if(form.jornada==='OUTRO'&&!form.obs.trim()){toast('Descreva o horário no campo Observações (obrigatório para "Outro").','err');return;}
+    const fnS=funcs.find(f=>String(f.id)===String(form.funcId));
+    if(!fnS)return;
+    const horas=calcH(form.entrada,form.saida);
+    const obj={
+      funcId:fnS.id,nome:fnS.apelido||fnS.nome.split(' ')[0],
+      data:form.data,local:form.local,
+      jornada:form.jornada,
+      entrada:form.entrada,saida:form.saida,horas,
+      diaria:fnS.diaria,vale:form.vale,valorVale:form.vale?Number(form.valorVale||0):0,
+      obs:form.obs,
+    };
+    if(mdl==='new'){setRegs(p=>[...p,{...obj,id:uid()}]);toast('Registro salvo!','ok');}
+    else{setRegs(p=>p.map(r=>r.id===mdl.id?{...r,...obj}:r));toast('Registro atualizado!','ok');}
+    if(form.local&&!obras.includes(form.local))setObras(o=>[...o,form.local]);
+    setMdl(null);setPag(1);
+  };
+  const confirmarDel=()=>{setRegs(p=>p.filter(r=>r.id!==del.id));toast('Registro removido.','info');setDel(null);};
+
+  // Estatísticas por jornada
+  const statJ=Object.entries(JORNADAS).map(([k,cfg])=>({k,cfg,n:lista.filter(r=>(r.jornada||'DIA_INTEIRO')===k).length}));
+
+  const cols=[
+    {label:'Funcionário',fn:r=><span style={{color:t.txt,fontWeight:600}}>{r.nome}</span>},
+    {label:'Data',fn:r=><span style={{color:t.sub,fontSize:12}}>{fmtBR(r.data)}</span>},
+    {label:'Jornada',fn:r=>bdgJornada(r.jornada||'DIA_INTEIRO',t)},
+    {label:'Local',fn:r=><span style={{color:t.sub,fontSize:12,maxWidth:160,display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.local}</span>},
+    {label:'Entrada',fn:r=><span style={{color:t.txt,fontSize:12}}>{r.entrada||'—'}</span>},
+    {label:'Saída',fn:r=><span style={{color:t.txt,fontSize:12}}>{r.saida||'—'}</span>},
+    {label:'Horas',fn:r=><Bdg cor="purple" t={t}>{r.horas||0}h</Bdg>},
+    {label:'Diária',fn:r=><span style={{color:t.ok,fontWeight:700}}>{fmtR$(r.diaria)}</span>},
+    {label:'Vale',fn:r=>r.vale?<Bdg cor="yellow" t={t}>{fmtR$(r.valorVale)}</Bdg>:<Bdg cor="gray" t={t}>Não</Bdg>},
+    {label:'',ct:true,fn:r=>(
+      <div style={{display:'flex',gap:5,justifyContent:'center'}}>
+        <button onClick={()=>abrirEd(r)} style={{background:t.ac+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="edit" s={13} c={t.ac}/></button>
+        <button onClick={()=>setDel(r)}  style={{background:t.err+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="trash" s={13} c={t.err}/></button>
+      </div>
+    )},
+  ];
+
+  const jCfg=JORNADAS[form.jornada]||JORNADAS.DIA_INTEIRO;
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+
+      {/* Filtros */}
+      <div style={{display:'flex',gap:10,marginBottom:18,alignItems:'flex-end',flexWrap:'wrap'}}>
+        <div>
+          <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Funcionário</p>
+          <select value={fF} onChange={e=>{setFF(e.target.value);setPag(1);}} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12,appearance:'none'}}>
+            <option value="">Todos</option>{funcs.map(f=><option key={f.id} value={f.id}>{f.apelido||f.nome}</option>)}
+          </select>
+        </div>
+        <div>
+          <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Data</p>
+          <input type="date" value={fD} onChange={e=>{setFD(e.target.value);setPag(1);}} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12}}/>
+        </div>
+        <div>
+          <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Jornada</p>
+          <select value={fJ} onChange={e=>{setFJ(e.target.value);setPag(1);}} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12,appearance:'none'}}>
+            <option value="">Todas</option>
+            {Object.entries(JORNADAS).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
+          </select>
+        </div>
+        {(fF||fD||fJ)&&<button onClick={()=>{setFF('');setFD('');setFJ('');}} style={{background:'transparent',border:`1px solid ${t.brd}`,borderRadius:8,padding:'8px 12px',color:t.sub,cursor:'pointer',fontSize:12,alignSelf:'flex-end'}}>Limpar filtros</button>}
+        <div style={{marginLeft:'auto'}}><Btn icon="plus" t={t} onClick={abrirNovo}>Novo Registro</Btn></div>
+      </div>
+
+      {/* Cards de resumo — linha 1: métricas gerais */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:12}}>
+        {[
+          {l:'Registros',   v:lista.length,c:t.ac},
+          {l:'Total Horas', v:`${lista.reduce((s,r)=>s+(r.horas||0),0).toFixed(1)}h`,c:t.pur},
+          {l:'Total Bruto', v:fmtR$(lista.reduce((s,r)=>s+(r.diaria||0),0)),c:t.ok},
+          {l:'Total Vales', v:fmtR$(lista.reduce((s,r)=>s+(r.valorVale||0),0)),c:t.warn},
+        ].map((c,i)=>(
+          <div key={i} style={{background:t.card,border:`1px solid ${t.brd}`,borderRadius:10,padding:'14px 16px'}}>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{c.l}</p>
+            <p style={{color:c.c,fontSize:18,fontWeight:800}}>{c.v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Cards de resumo — linha 2: contagem por tipo de jornada */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:18}}>
+        {statJ.map(({k,cfg,n})=>(
+          <button key={k} onClick={()=>{setFJ(fJ===k?'':k);setPag(1);}}
+            style={{background:fJ===k?cfg.corBg:t.card,border:`1px solid ${fJ===k?cfg.cor:t.brd}`,borderRadius:10,padding:'12px 16px',cursor:'pointer',textAlign:'left',transition:'all .15s',display:'flex',alignItems:'center',gap:12}}>
+            <span style={{fontSize:20}}>{cfg.icon}</span>
+            <div>
+              <p style={{color:fJ===k?cfg.cor:t.txt,fontSize:12,fontWeight:700}}>{cfg.label}</p>
+              <p style={{color:fJ===k?cfg.cor:t.sub,fontSize:20,fontWeight:800,lineHeight:1}}>{n}</p>
+            </div>
+            {fJ===k&&<span style={{marginLeft:'auto',background:cfg.cor,color:'#fff',borderRadius:6,padding:'2px 8px',fontSize:10,fontWeight:700}}>filtrado</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Tabela */}
+      <Crd t={t} noPad>
+        <Tbl cols={cols} rows={paged} t={t}/>
+        <div style={{padding:'0 14px 14px'}}>
+          <Pag total={totalP} atual={pag} set={setPag} t={t} totalReg={lista.length}/>
+        </div>
+      </Crd>
+
+      {/* Modal Novo/Editar */}
+      {mdl&&(
+        <Mdl title={mdl==='new'?'Novo Registro de Trabalho':'Editar Registro'} onClose={()=>setMdl(null)} t={t} w={640}>
+
+          {/* Linha 1: Funcionário + Data */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 18px'}}>
+            <Slt label="Funcionário *" value={form.funcId} onChange={up('funcId')} t={t}>
+              <option value="">— Selecione —</option>
+              {funcs.filter(f=>f.status==='ativo').map(f=><option key={f.id} value={f.id}>{f.apelido||f.nome}</option>)}
+            </Slt>
+            <Inp label="Data *" type="date" value={form.data} onChange={up('data')} t={t}/>
+          </div>
+
+          {/* Local */}
+          <div style={{marginBottom:18}}>
+            <label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>Local / Obra *</label>
+            <input value={form.local} onChange={up('local')} list="obras-h" placeholder="Nome da obra ou local..."
+              style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,boxSizing:'border-box'}}/>
+            <datalist id="obras-h">{obras.map((o,i)=><option key={i} value={o}/>)}</datalist>
+          </div>
+
+          {/* ── TIPO DE JORNADA (campo novo) ─────────────── */}
+          <div style={{marginBottom:18}}>
+            <label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:8,textTransform:'uppercase',letterSpacing:.5}}>
+              Tipo de Jornada *
+            </label>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+              {Object.entries(JORNADAS).map(([k,cfg])=>(
+                <button key={k} type="button"
+                  onClick={()=>mudarJornada(k)}
+                  style={{
+                    padding:'12px 10px',
+                    borderRadius:10,
+                    border:`2px solid ${form.jornada===k?cfg.cor:t.brd}`,
+                    background:form.jornada===k?cfg.corBg:t.inp,
+                    cursor:'pointer',
+                    transition:'all .15s',
+                    display:'flex',flexDirection:'column',alignItems:'center',gap:5,
+                  }}>
+                  <span style={{fontSize:22}}>{cfg.icon}</span>
+                  <span style={{
+                    color:form.jornada===k?cfg.cor:t.sub,
+                    fontSize:12,fontWeight:form.jornada===k?700:500,
+                    lineHeight:1.2,textAlign:'center',
+                  }}>{cfg.label}</span>
+                  {form.jornada===k&&cfg.hSugerida>0&&(
+                    <span style={{color:cfg.cor,fontSize:10,fontWeight:600}}>{cfg.hSugerida}h sugeridas</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Banner informativo dinâmico por tipo */}
+            <div style={{marginTop:10,padding:'9px 14px',borderRadius:8,background:jCfg.corBg,border:`1px solid ${jCfg.cor}30`,display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:16}}>{jCfg.icon}</span>
+              <div>
+                {form.jornada==='DIA_INTEIRO'&&<p style={{color:jCfg.cor,fontSize:12}}>Jornada completa — horários <strong>07:00 às 17:00</strong> preenchidos automaticamente. Edite se necessário.</p>}
+                {form.jornada==='MEIO_TURNO'&&<p style={{color:jCfg.cor,fontSize:12}}>Meio turno — horários <strong>07:00 às 12:00</strong> preenchidos automaticamente. Edite se necessário.</p>}
+                {form.jornada==='OUTRO'&&<p style={{color:jCfg.cor,fontSize:12}}>Preencha os horários manualmente e <strong>descreva o motivo nas Observações</strong> (campo obrigatório).</p>}
+              </div>
+            </div>
+          </div>
+
+          {/* Horários */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 18px'}}>
+            <Inp label="Horário Entrada" type="time" value={form.entrada} onChange={up('entrada')} t={t}/>
+            <Inp label="Horário Saída"   type="time" value={form.saida}   onChange={up('saida')} t={t}/>
+          </div>
+
+          {/* Resumo de horas calculado */}
+          {(form.entrada||form.saida)&&(
+            <div style={{
+              background:form.entrada&&form.saida?jCfg.corBg:t.inp,
+              border:`1px solid ${form.entrada&&form.saida?jCfg.cor+'40':t.inpB}`,
+              borderRadius:8,padding:'10px 14px',marginBottom:14,
+              display:'flex',gap:20,alignItems:'center',flexWrap:'wrap',
+            }}>
+              {form.entrada&&form.saida?(
+                <>
+                  <span style={{color:jCfg.cor,fontSize:13}}>
+                    ⏱ <strong>{calcH(form.entrada,form.saida)}h</strong> trabalhadas
+                  </span>
+                  <span style={{color:t.sub,fontSize:12}}>
+                    💵 Diária: <strong style={{color:t.txt}}>{fmtR$(fn?.diaria||0)}</strong>
+                  </span>
+                  {/* Alerta se horas inconsistentes com jornada */}
+                  {form.jornada==='DIA_INTEIRO'&&calcH(form.entrada,form.saida)<4&&(
+                    <span style={{color:t.warn,fontSize:11}}>⚠ Horas abaixo do esperado para dia inteiro</span>
+                  )}
+                  {form.jornada==='MEIO_TURNO'&&calcH(form.entrada,form.saida)>6&&(
+                    <span style={{color:t.warn,fontSize:11}}>⚠ Horas acima do esperado para meio turno</span>
+                  )}
+                </>
+              ):(
+                <span style={{color:t.sub,fontSize:12}}>Preencha entrada e saída para calcular</span>
+              )}
+            </div>
+          )}
+
+          {/* Vale */}
+          <div style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:10,textTransform:'uppercase',letterSpacing:.5}}>Vale / Adiantamento</p>
+            <div style={{display:'flex',gap:8,marginBottom:form.vale?12:0}}>
+              {[true,false].map(v=>(
+                <button key={String(v)} onClick={()=>setForm(p=>({...p,vale:v,valorVale:v?p.valorVale:''}))}
+                  style={{flex:1,padding:'9px',borderRadius:8,border:`1px solid ${form.vale===v?(v?t.ok:t.err):t.inpB}`,cursor:'pointer',fontWeight:700,fontSize:13,background:form.vale===v?(v?t.ok+'18':t.err+'18'):'transparent',color:form.vale===v?(v?t.ok:t.err):t.sub,transition:'all .15s'}}>
+                  {v?'✓ Recebeu vale':'✗ Não recebeu'}
+                </button>
+              ))}
+            </div>
+            {form.vale&&<Inp label="Valor do Vale (R$)" type="number" value={form.valorVale} onChange={up('valorVale')} t={t} sx={{marginBottom:0}} placeholder="0,00"/>}
+          </div>
+
+          {/* Observações — obrigatória para OUTRO */}
+          <div style={{marginBottom:14}}>
+            <label style={{color:form.jornada==='OUTRO'?t.warn:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>
+              Observações {form.jornada==='OUTRO'?'*  (obrigatório para "Outro")':''}
+            </label>
+            <textarea
+              value={form.obs}
+              onChange={up('obs')}
+              rows={3}
+              placeholder={form.jornada==='OUTRO'
+                ?"Descreva o motivo do horário diferenciado (ex: saiu mais cedo por consulta médica)..."
+                :"Opcional..."}
+              style={{
+                width:'100%',background:t.inp,
+                border:`1px solid ${form.jornada==='OUTRO'&&!form.obs.trim()?t.warn:t.inpB}`,
+                borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,
+                fontFamily:'DM Sans,sans-serif',resize:'vertical',boxSizing:'border-box',
+              }}
+            />
+            {form.jornada==='OUTRO'&&!form.obs.trim()&&(
+              <p style={{color:t.warn,fontSize:11,marginTop:4}}>⚠ Descreva o horário ou motivo para prosseguir</p>
+            )}
+          </div>
+
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:4}}>
+            <Btn v="ghost" t={t} onClick={()=>setMdl(null)}>Cancelar</Btn>
+            <Btn t={t} onClick={salvar} icon="save">Salvar Registro</Btn>
+          </div>
+        </Mdl>
+      )}
+
+      {del&&(
+        <Mdl title="Confirmar Exclusão" onClose={()=>setDel(null)} t={t} w={400}>
+          <p style={{color:t.sub,fontSize:13,marginBottom:20}}>Excluir registro de <strong style={{color:t.txt}}>{del.nome}</strong> em <strong style={{color:t.txt}}>{fmtBR(del.data)}</strong>?</p>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+            <Btn v="ghost" t={t} onClick={()=>setDel(null)}>Cancelar</Btn>
+            <Btn v="danger" t={t} onClick={confirmarDel} icon="trash">Excluir</Btn>
+          </div>
+        </Mdl>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   PAGAMENTOS
+══════════════════════════════════════════════════════ */
+function Pags({pags,setPags,regs,funcs,t,toast}){
+  const [mdl,setMdl]=useState(null);
+  const [del,setDel]=useState(null);
+  const [form,setForm]=useState({funcId:'',data:hoje,valor:'',tipo:'Semanal',obs:''});
+  const up=k=>e=>setForm(p=>({...p,[k]:e.target.value}));
+
+  const saldos=funcs.filter(f=>f.status==='ativo').map(f=>{
+    const b=regs.filter(r=>String(r.funcId)===String(f.id)).reduce((s,r)=>s+(r.diaria||0),0);
+    const v=regs.filter(r=>String(r.funcId)===String(f.id)).reduce((s,r)=>s+(r.valorVale||0),0);
+    const p=pags.filter(pg=>String(pg.funcId)===String(f.id)).reduce((s,pg)=>s+(pg.valor||0),0);
+    return{...f,bruto:b,vales:v,pago:p,saldo:b-v-p,dias:regs.filter(r=>String(r.funcId)===String(f.id)).length};
+  }).sort((a,b)=>b.saldo-a.saldo);
+
+  const salvar=()=>{
+    const fn=funcs.find(f=>String(f.id)===String(form.funcId));
+    if(!fn||!form.valor){toast('Preencha os campos obrigatórios.','err');return;}
+    const obj={funcId:fn.id,nome:fn.apelido||fn.nome.split(' ')[0],data:form.data,valor:Number(form.valor),tipo:form.tipo,obs:form.obs};
+    if(mdl==='new'){setPags(p=>[...p,{...obj,id:uid()}]);toast('Pagamento registrado!','ok');}
+    else{setPags(p=>p.map(pg=>pg.id===mdl.id?{...pg,...obj}:pg));toast('Pagamento atualizado!','ok');}
+    setMdl(null);
+  };
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:22}}>
+        {[{l:'Total Bruto',v:fmtR$(saldos.reduce((s,f)=>s+f.bruto,0)),c:t.txt,ic:'dollar'},{l:'Total Pago',v:fmtR$(saldos.reduce((s,f)=>s+f.pago+f.vales,0)),c:t.ok,ic:'check'},{l:'Em Aberto',v:fmtR$(saldos.reduce((s,f)=>s+Math.max(0,f.saldo),0)),c:t.err,ic:'alert'}].map((c,i)=>(
+          <Crd key={i} t={t} sx={{padding:'18px 20px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+              <div><p style={{color:t.sub,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>{c.l}</p><p style={{color:c.c,fontSize:22,fontWeight:800}}>{c.v}</p></div>
+              <div style={{background:c.c+'18',borderRadius:10,padding:10}}><Ic n={c.ic} s={20} c={c.c}/></div>
+            </div>
+          </Crd>
+        ))}
+      </div>
+
+      <Crd t={t} title="Saldo por Funcionário" sx={{marginBottom:22}} noPad action={<div style={{padding:'0 20px'}}></div>}>
+        <Tbl t={t} cols={[
+          {label:'Funcionário',fn:r=>(
+            <div style={{display:'flex',alignItems:'center',gap:9}}>
+              <Av ini={r.ini||r.nome.slice(0,2).toUpperCase()} size={32} cor={r.saldo>0?t.warn:t.ok}/>
+              <div><p style={{color:t.txt,fontWeight:600,fontSize:13}}>{r.apelido||r.nome}</p><p style={{color:t.sub,fontSize:11}}>{r.funcao} · {r.dias} dias</p></div>
+            </div>
+          )},
+          {label:'Bruto',fn:r=><span style={{color:t.txt}}>{fmtR$(r.bruto)}</span>},
+          {label:'Vales Rec.',fn:r=><span style={{color:t.warn}}>{fmtR$(r.vales)}</span>},
+          {label:'Já Pago',fn:r=><span style={{color:t.ok}}>{fmtR$(r.pago)}</span>},
+          {label:'Saldo',fn:r=><strong style={{color:r.saldo>0?t.err:t.ok,fontSize:14}}>{fmtR$(r.saldo)}</strong>},
+          {label:'',ct:true,fn:r=>(
+            <Btn size="sm" t={t} onClick={()=>{setForm({funcId:String(r.id),data:hoje,valor:String(Math.max(0,r.saldo)),tipo:'Semanal',obs:''});setMdl('new');}}>Registrar Pgto.</Btn>
+          )},
+        ]} rows={saldos}/>
+      </Crd>
+
+      <Crd t={t} title="Histórico de Pagamentos" noPad action={<Btn size="sm" icon="plus" t={t} onClick={()=>{setForm({funcId:'',data:hoje,valor:'',tipo:'Semanal',obs:''});setMdl('new');}}>Registrar</Btn>}>
+        <Tbl t={t} cols={[
+          {label:'Funcionário',fn:r=><span style={{color:t.txt,fontWeight:600}}>{r.nome}</span>},
+          {label:'Data',fn:r=><span style={{color:t.sub,fontSize:12}}>{fmtBR(r.data)}</span>},
+          {label:'Valor',fn:r=><span style={{color:t.ok,fontWeight:700}}>{fmtR$(r.valor)}</span>},
+          {label:'Tipo',fn:r=><Bdg cor="blue" t={t}>{r.tipo}</Bdg>},
+          {label:'Obs',fn:r=><span style={{color:t.sub,fontSize:12}}>{r.obs||'—'}</span>},
+          {label:'',ct:true,fn:r=>(
+            <button onClick={()=>setDel(r)} style={{background:t.err+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="trash" s={13} c={t.err}/></button>
+          )},
+        ]} rows={[...pags].sort((a,b)=>b.data.localeCompare(a.data))}/>
+      </Crd>
+
+      {mdl&&(
+        <Mdl title="Registrar Pagamento" onClose={()=>setMdl(null)} t={t} w={500}>
+          <Slt label="Funcionário *" value={form.funcId} onChange={up('funcId')} t={t}>
+            <option value="">— Selecione —</option>
+            {funcs.filter(f=>f.status==='ativo').map(f=>{const sl=saldos.find(s=>String(s.id)===String(f.id));return<option key={f.id} value={f.id}>{f.apelido||f.nome} → saldo: {fmtR$(sl?.saldo||0)}</option>;})}
+          </Slt>
+          <Inp label="Data *"       type="date"   value={form.data}  onChange={up('data')}  t={t}/>
+          <Inp label="Valor (R$) *" type="number" value={form.valor} onChange={up('valor')} t={t} placeholder="0,00"/>
+          <Slt label="Tipo" value={form.tipo} onChange={up('tipo')} t={t}>
+            {['Semanal','Quinzenal','Mensal','Adiantamento','Acerto Final'].map(v=><option key={v}>{v}</option>)}
+          </Slt>
+          <Inp label="Observações" value={form.obs} onChange={up('obs')} t={t} placeholder="Opcional..."/>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:4}}>
+            <Btn v="ghost" t={t} onClick={()=>setMdl(null)}>Cancelar</Btn>
+            <Btn v="success" t={t} onClick={salvar} icon="check">Confirmar Pagamento</Btn>
+          </div>
+        </Mdl>
+      )}
+      {del&&(
+        <Mdl title="Excluir Pagamento" onClose={()=>setDel(null)} t={t} w={400}>
+          <p style={{color:t.sub,fontSize:13,marginBottom:20}}>Excluir pagamento de <strong style={{color:t.ok}}>{fmtR$(del.valor)}</strong> para <strong style={{color:t.txt}}>{del.nome}</strong>?</p>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+            <Btn v="ghost" t={t} onClick={()=>setDel(null)}>Cancelar</Btn>
+            <Btn v="danger" t={t} onClick={()=>{setPags(p=>p.filter(pg=>pg.id!==del.id));toast('Pagamento removido.','info');setDel(null);}}>Excluir</Btn>
+          </div>
+        </Mdl>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   RELATÓRIOS
+══════════════════════════════════════════════════════ */
+function Rels({regs,funcs,pags,t,toast}){
+  const [fF,setFF]=useState('');const [fI,setFI]=useState('');const [fFim,setFFim]=useState('');
+  const [fJ,setFJ]=useState(''); // filtro jornada
+  const lista=regs.filter(r=>
+    (!fF||String(r.funcId)===String(fF))&&
+    (!fI||r.data>=fI)&&(!fFim||r.data<=fFim)&&
+    (!fJ||(r.jornada||'DIA_INTEIRO')===fJ)
+  ).sort((a,b)=>a.data.localeCompare(b.data));
+  const por={};
+  lista.forEach(r=>{if(!por[r.funcId])por[r.funcId]={nome:r.nome,dias:0,horas:0,bruto:0,vales:0,locais:new Set()};por[r.funcId].dias++;por[r.funcId].horas+=r.horas||0;por[r.funcId].bruto+=r.diaria||0;por[r.funcId].vales+=r.valorVale||0;por[r.funcId].locais.add(r.local);});
+  const barData=Object.values(por).map(p=>({label:p.nome,v1:p.bruto,v2:p.vales}));
+  const doExp=()=>{try{exportXLSX(lista,funcs,pags);toast('Excel exportado com 3 abas!','ok');}catch(e){toast('Erro ao exportar.','err');}};
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      <Crd t={t} sx={{marginBottom:18}}>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Funcionário</p>
+            <select value={fF} onChange={e=>setFF(e.target.value)} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12,appearance:'none',minWidth:180}}>
+              <option value="">Todos</option>{funcs.map(f=><option key={f.id} value={f.id}>{f.apelido||f.nome}</option>)}
+            </select>
+          </div>
+          {[['De',fI,setFI],['Até',fFim,setFFim]].map(([lb,val,set])=>(
+            <div key={lb}>
+              <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>{lb}</p>
+              <input type="date" value={val} onChange={e=>set(e.target.value)} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12}}/>
+            </div>
+          ))}
+          <div>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Jornada</p>
+            <select value={fJ} onChange={e=>setFJ(e.target.value)} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'8px 12px',color:t.txt,fontSize:12,appearance:'none',minWidth:150}}>
+              <option value="">Todas</option>
+              {Object.entries(JORNADAS).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
+            </select>
+          </div>
+          <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+            <button onClick={()=>window.print()} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 14px',background:t.card,border:`1px solid ${t.brd}`,borderRadius:8,color:t.sub,fontSize:12,cursor:'pointer'}}>
+              <Ic n="print" s={14} c={t.sub}/>Imprimir
+            </button>
+            <button onClick={doExp} style={{display:'flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#14532d',border:'1px solid #166534',borderRadius:8,color:'#4ade80',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+              <Ic n="dl" s={14} c="#4ade80"/>Exportar Excel
+            </button>
+          </div>
+        </div>
+      </Crd>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:12}}>
+        {[{l:'Registros',v:lista.length,c:t.ac},{l:'Total Horas',v:`${lista.reduce((s,r)=>s+(r.horas||0),0).toFixed(1)}h`,c:t.pur},{l:'Total Bruto',v:fmtR$(lista.reduce((s,r)=>s+(r.diaria||0),0)),c:t.ok},{l:'Total Vales',v:fmtR$(lista.reduce((s,r)=>s+(r.valorVale||0),0)),c:t.warn}].map((c,i)=>(
+          <div key={i} style={{background:t.card,border:`1px solid ${t.brd}`,borderRadius:10,padding:'14px 16px'}}>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{c.l}</p>
+            <p style={{color:c.c,fontSize:18,fontWeight:800}}>{c.v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Breakdown por tipo de jornada */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:18}}>
+        {Object.entries(JORNADAS).map(([k,cfg])=>{
+          const n=lista.filter(r=>(r.jornada||'DIA_INTEIRO')===k).length;
+          const h=lista.filter(r=>(r.jornada||'DIA_INTEIRO')===k).reduce((s,r)=>s+(r.horas||0),0);
+          const pct=lista.length>0?Math.round(n/lista.length*100):0;
+          return(
+            <div key={k} style={{background:t.card,border:`1px solid ${cfg.cor}30`,borderRadius:10,padding:'14px 16px',display:'flex',alignItems:'center',gap:12}}>
+              <span style={{fontSize:24}}>{cfg.icon}</span>
+              <div style={{flex:1}}>
+                <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>{cfg.label}</p>
+                <p style={{color:cfg.cor,fontSize:18,fontWeight:800,lineHeight:1}}>{n} <span style={{fontSize:12,fontWeight:500}}>registros</span></p>
+                <p style={{color:t.sub,fontSize:11,marginTop:2}}>{h.toFixed(1)}h · {pct}% do total</p>
+              </div>
+              {/* Barra proporcional */}
+              <div style={{width:4,height:40,background:t.brd,borderRadius:4,overflow:'hidden',flexShrink:0}}>
+                <div style={{width:'100%',height:`${pct}%`,background:cfg.cor,borderRadius:4,transition:'height .4s',marginTop:`${100-pct}%`}}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {barData.length>0&&(
+        <Crd t={t} title="Comparativo — Bruto × Vales por Funcionário" sx={{marginBottom:18}}>
+          <div style={{display:'flex',gap:14,marginBottom:8}}>
+            {[{cor:t.ac,lb:'Bruto'},{cor:t.warn,lb:'Vales'}].map((l,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:10,height:10,borderRadius:2,background:l.cor}}/><span style={{color:t.sub,fontSize:11}}>{l.lb}</span></div>)}
+          </div>
+          <BarChart data={barData} cor1={t.ac} cor2={t.warn} t={t}/>
+        </Crd>
+      )}
+
+      {Object.values(por).length>0&&(
+        <Crd t={t} title="Resumo por Funcionário" sx={{marginBottom:18}} noPad>
+          <Tbl t={t} cols={[
+            {label:'Funcionário',fn:r=><span style={{color:t.txt,fontWeight:700}}>{r.nome}</span>},
+            {label:'Dias',fn:r=><span>{r.dias}</span>},
+            {label:'Horas',fn:r=><Bdg cor="purple" t={t}>{r.horas.toFixed(1)}h</Bdg>},
+            {label:'Bruto',fn:r=><span style={{color:t.txt,fontWeight:600}}>{fmtR$(r.bruto)}</span>},
+            {label:'Vales Rec.',fn:r=><span style={{color:t.warn}}>{fmtR$(r.vales)}</span>},
+            {label:'Saldo',fn:r=><strong style={{color:t.ok,fontSize:14}}>{fmtR$(r.bruto-r.vales)}</strong>},
+            {label:'Obras',fn:r=><span style={{color:t.sub,fontSize:11}}>{[...r.locais].join(', ')}</span>},
+          ]} rows={Object.values(por)}/>
+        </Crd>
+      )}
+
+      <Crd t={t} title={`Registros Detalhados (${lista.length})`} noPad>
+        <Tbl t={t} cols={[
+          {label:'Funcionário',fn:r=><span style={{color:t.txt,fontWeight:600}}>{r.nome}</span>},
+          {label:'Data',fn:r=><span style={{color:t.sub,fontSize:12}}>{fmtBR(r.data)}</span>},
+          {label:'Jornada',fn:r=>bdgJornada(r.jornada||'DIA_INTEIRO',t)},
+          {label:'Local',fn:r=><span style={{color:t.sub,fontSize:12}}>{r.local}</span>},
+          {label:'H',fn:r=><Bdg cor="purple" t={t}>{r.horas||0}h</Bdg>},
+          {label:'Diária',fn:r=><span style={{color:t.ok,fontWeight:700}}>{fmtR$(r.diaria)}</span>},
+          {label:'Vale',fn:r=>r.vale?<Bdg cor="yellow" t={t}>{fmtR$(r.valorVale)}</Bdg>:<span style={{color:t.sub}}>—</span>},
+          {label:'Saldo',fn:r=><strong style={{color:t.txt}}>{fmtR$((r.diaria||0)-(r.valorVale||0))}</strong>},
+        ]} rows={lista}/>
+      </Crd>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   ÁUDIO
+══════════════════════════════════════════════════════ */
+function Audio({funcs,obras,setObras,onSalvar,t,toast}){
+  const [etapa,setEtapa]=useState('inicio');
+  const [txt,setTxt]=useState('');const [dados,setDados]=useState(null);
+  const [erro,setErro]=useState('');const [seg,setSeg]=useState(0);
+  const [analyser,setAnalyser]=useState(null);const [audioURL,setAudioURL]=useState(null);
+  const [ftxt,setFtxt]=useState('');const [ptxt,setPtxt]=useState('');
+  const mediaRef=useRef();const chunksRef=useRef([]);const timerRef=useRef();
+  const ctxRef=useRef();const canvRef=useRef();const rafRef=useRef();const recRef=useRef();const fileRef=useRef();
+  const suporta=typeof window!=='undefined'&&('SpeechRecognition' in window||'webkitSpeechRecognition' in window);
+
+  useEffect(()=>{
+    if(!analyser||!canvRef.current)return;
+    const cv=canvRef.current,cx=cv.getContext('2d'),buf=new Uint8Array(analyser.frequencyBinCount);
+    const draw=()=>{rafRef.current=requestAnimationFrame(draw);analyser.getByteTimeDomainData(buf);cx.clearRect(0,0,cv.width,cv.height);cx.lineWidth=2;cx.strokeStyle=t.ac;cx.shadowBlur=5;cx.shadowColor=t.ac+'80';cx.beginPath();buf.forEach((v,i)=>{const x=i*(cv.width/buf.length),y=(v/128)*(cv.height/2);i===0?cx.moveTo(x,y):cx.lineTo(x,y);});cx.stroke();};
+    draw();return()=>cancelAnimationFrame(rafRef.current);
+  },[analyser,t]);
+
+  const iniciar=async()=>{setErro('');try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    const src=ac.createMediaStreamSource(stream),an=ac.createAnalyser();an.fftSize=256;src.connect(an);
+    ctxRef.current=ac;setAnalyser(an);
+    const mime=['audio/webm;codecs=opus','audio/webm','audio/ogg',''].find(m=>!m||MediaRecorder.isTypeSupported(m))||'';
+    const rec=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+    chunksRef.current=[];rec.ondataavailable=e=>e.data.size>0&&chunksRef.current.push(e.data);
+    rec.onstop=()=>{const b=new Blob(chunksRef.current,{type:'audio/webm'});setAudioURL(URL.createObjectURL(b));setTxt((ftxt+' '+ptxt).trim());setEtapa('revisar');};
+    rec.start(100);mediaRef.current=rec;
+    if(suporta){const R=window.SpeechRecognition||window.webkitSpeechRecognition;const r=new R();r.lang='pt-BR';r.continuous=true;r.interimResults=true;
+      r.onresult=e=>{let f='',p='';for(let i=e.resultIndex;i<e.results.length;i++){const x=e.results[i][0].transcript;e.results[i].isFinal?f+=x:p+=x;}if(f)setFtxt(prev=>prev+f+' ');setPtxt(p);};r.start();recRef.current=r;}
+    setEtapa('gravando');setSeg(0);timerRef.current=setInterval(()=>setSeg(s=>s+1),1000);
+  }catch(e){setErro('Microfone indisponível: '+e.message);}};
+
+  const parar=()=>{clearInterval(timerRef.current);recRef.current?.stop();mediaRef.current?.stop();mediaRef.current?.stream?.getTracks().forEach(t2=>t2.stop());ctxRef.current?.close();setAnalyser(null);};
+  const aoArq=e=>{const f=e.target.files[0];if(!f)return;setAudioURL(URL.createObjectURL(f));setTxt('');setEtapa('revisar');};
+
+  const interpretar=async()=>{
+    if(!txt.trim()){setErro('Insira a transcrição.');return;}
+    setEtapa('ia');setErro('');
+    try{
+      const lista=funcs.map(f=>`id:${f.id}|"${f.apelido}"|"${f.nome}"`).join('\n');
+      const prompt=`Você é um assistente que extrai dados de registros de trabalho em obras de construção no Brasil.\nDATA HOJE: ${hoje}\nDATA ONTEM: ${ontem}\n\nFuncionários cadastrados:\n${lista}\n\nTexto falado: "${txt}"\n\nInstruções:\n- Identifique o funcionário pelo nome ou apelido → retorne o id exato\n- Resolva datas relativas: "hoje"=${hoje}, "ontem"=${ontem}, "dia X"=mês atual, dia da semana=calcule\n- Vale: "não recebeu"→false, valor mencionado→true\n- Extraia horários se mencionados\n\nResponda SOMENTE com JSON válido (sem markdown, sem explicação):\n{"funcionarioId":número ou null,"funcionarioNome":"string","data":"YYYY-MM-DD","local":"string ou null","vale":true ou false,"valorVale":número,"entrada":"HH:MM ou null","saida":"HH:MM ou null","obs":"string","confianca":0-100}`;
+      const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:prompt}]})});
+      if(!r.ok)throw new Error('API retornou '+r.status);
+      const data=await r.json();
+      const raw=data.content?.find(b=>b.type==='text')?.text||'{}';
+      const res=JSON.parse(raw.replace(/```json|```/g,'').trim());
+      let fId=res.funcionarioId,fNome=res.funcionarioNome||'';
+      if(!fId&&fNome){const m=funcs.find(f=>f.nome.toLowerCase().includes(fNome.toLowerCase())||(f.apelido||'').toLowerCase().includes(fNome.toLowerCase()));if(m){fId=m.id;fNome=m.apelido||m.nome;}}
+      const fn=funcs.find(f=>String(f.id)===String(fId));
+      setDados({funcionarioId:fId,funcionarioNome:fNome||fn?.apelido||fn?.nome||'',data:res.data||hoje,local:res.local||'',vale:res.vale??false,valorVale:res.valorVale||0,entrada:res.entrada||'',saida:res.saida||'',obs:res.obs||'',diaria:fn?.diaria||0,confianca:res.confianca||0});
+      setEtapa('preview');
+    }catch(e){setErro('Erro IA: '+e.message);setEtapa('revisar');}
+  };
+
+  const confirmar=()=>{
+    onSalvar({id:uid(),funcId:dados.funcionarioId,nome:dados.funcionarioNome,data:dados.data,local:dados.local,entrada:dados.entrada,saida:dados.saida,horas:calcH(dados.entrada,dados.saida),diaria:dados.diaria,vale:dados.vale,valorVale:dados.valorVale,obs:dados.obs});
+    if(dados.local&&!obras.includes(dados.local))setObras(o=>[...o,dados.local]);
+    toast('Registro salvo com sucesso!','ok');
+    setEtapa('ok');
+  };
+  const resetar=()=>{setEtapa('inicio');setTxt('');setDados(null);setErro('');setSeg(0);setAudioURL(null);setFtxt('');setPtxt('');};
+  const mmss=`${String(Math.floor(seg/60)).padStart(2,'0')}:${String(seg%60).padStart(2,'0')}`;
+
+  return(
+    <div style={{padding:22,maxWidth:700,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      {etapa==='ok'&&(
+        <Crd t={t} sx={{textAlign:'center',padding:'52px 40px'}}>
+          <div style={{width:72,height:72,background:t.ok+'20',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}><Ic n="check" s={34} c={t.ok}/></div>
+          <h2 style={{color:t.txt,fontSize:22,fontWeight:800,marginBottom:8}}>Registro Salvo!</h2>
+          <p style={{color:t.sub,fontSize:13,marginBottom:24}}>O registro foi adicionado e salvo automaticamente.</p>
+          <Btn t={t} onClick={resetar} size="lg">Novo Registro de Áudio</Btn>
+        </Crd>
+      )}
+      {etapa==='inicio'&&(
+        <Crd t={t}>
+          <div style={{background:t.ac+'0e',border:`1px dashed ${t.ac}40`,borderRadius:10,padding:'14px 18px',marginBottom:20}}>
+            <p style={{color:t.ac,fontSize:12,fontWeight:700,marginBottom:4}}>💡 EXEMPLO DE USO</p>
+            <p style={{color:t.sub,fontSize:13,lineHeight:1.7,fontStyle:'italic'}}>"Hoje o João trabalhou na obra do Condomínio Vista Alegre e recebeu vale de 100 reais."</p>
+          </div>
+          {erro&&<div style={{background:t.err+'18',border:`1px solid ${t.err}40`,borderRadius:8,padding:'10px 14px',marginBottom:14,color:t.err,fontSize:13}}>{erro}</div>}
+          <button onClick={iniciar} style={{width:'100%',padding:'14px',background:t.ac,border:'none',borderRadius:9,color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:9,marginBottom:10}}>
+            <Ic n="mic" s={18} c="#fff"/>Gravar Áudio Agora
+          </button>
+          <button onClick={()=>fileRef.current?.click()} style={{width:'100%',padding:'12px',background:'transparent',border:`1px solid ${t.brd}`,borderRadius:9,color:t.sub,fontSize:13,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:12}}>
+            <Ic n="up" s={16} c={t.sub}/>Enviar Arquivo de Áudio
+          </button>
+          <input ref={fileRef} type="file" accept="audio/*" style={{display:'none'}} onChange={aoArq}/>
+          <div style={{textAlign:'center'}}><button onClick={()=>setEtapa('revisar')} style={{background:'none',border:'none',color:t.sub,fontSize:12,cursor:'pointer',textDecoration:'underline'}}>Digitar transcrição manualmente</button></div>
+        </Crd>
+      )}
+      {etapa==='gravando'&&(
+        <Crd t={t} sx={{textAlign:'center'}}>
+          <div style={{display:'inline-flex',alignItems:'center',justifyContent:'center',position:'relative',width:120,height:120,marginBottom:12}}>
+            <div style={{position:'absolute',width:110,height:110,borderRadius:'50%',background:t.err+'0c',animation:'pulse 1.4s infinite'}}/>
+            <div style={{position:'absolute',width:80,height:80,borderRadius:'50%',background:t.err+'16',animation:'pulse 1.4s .2s infinite'}}/>
+            <div style={{width:54,height:54,borderRadius:'50%',background:t.err,display:'flex',alignItems:'center',justifyContent:'center'}}><Ic n="mic" s={24} c="#fff"/></div>
+          </div>
+          <p style={{color:t.err,fontSize:24,fontWeight:800,marginBottom:4}}>{mmss}</p>
+          <p style={{color:t.sub,fontSize:13,marginBottom:16}}>Gravando... fale agora</p>
+          <canvas ref={canvRef} width={580} height={50} style={{width:'100%',height:50,borderRadius:8,background:t.inp,border:`1px solid ${t.brd}`,display:'block',margin:'0 auto 16px'}}/>
+          {suporta&&(ftxt||ptxt)&&(
+            <div style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'10px 14px',marginBottom:16,textAlign:'left'}}>
+              <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Transcrição ao vivo</p>
+              <p style={{color:t.txt,fontSize:13,lineHeight:1.6}}>{ftxt}<span style={{color:t.sub}}>{ptxt}</span></p>
+            </div>
+          )}
+          <button onClick={parar} style={{padding:'11px 32px',background:t.err,border:'none',borderRadius:9,color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:8}}>
+            <Ic n="stop" s={18} c="#fff"/>Parar e Revisar
+          </button>
+        </Crd>
+      )}
+      {etapa==='revisar'&&(
+        <Crd t={t}>
+          <h3 style={{color:t.txt,fontSize:15,fontWeight:700,marginBottom:16}}>Revisar Transcrição</h3>
+          {audioURL&&<div style={{marginBottom:16}}><audio controls src={audioURL} style={{width:'100%',height:38}}/></div>}
+          {erro&&<div style={{background:t.err+'18',border:`1px solid ${t.err}40`,borderRadius:8,padding:'10px 14px',marginBottom:12,color:t.err,fontSize:13}}>{erro}</div>}
+          <div style={{marginBottom:14}}>
+            <label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>Transcrição *</label>
+            <textarea value={txt} onChange={e=>setTxt(e.target.value)} rows={4}
+              placeholder='"Hoje o João trabalhou na obra da Rua São Paulo e recebeu vale de 100 reais."'
+              style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'10px 12px',color:t.txt,fontSize:13,fontFamily:'DM Sans,sans-serif',resize:'vertical',boxSizing:'border-box'}}/>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <Btn v="ghost" t={t} onClick={resetar}>Cancelar</Btn>
+            <button onClick={interpretar} style={{flex:1,padding:'10px',background:t.ac,border:'none',borderRadius:8,color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}}>Interpretar com IA →</button>
+          </div>
+        </Crd>
+      )}
+      {etapa==='ia'&&(
+        <Crd t={t} sx={{textAlign:'center',padding:'64px 40px'}}>
+          <div style={{width:52,height:52,border:`3px solid ${t.ac}30`,borderTop:`3px solid ${t.ac}`,borderRadius:'50%',animation:'spin .8s linear infinite',margin:'0 auto 16px'}}/>
+          <p style={{color:t.txt,fontWeight:700,fontSize:15}}>Interpretando com IA...</p>
+          <p style={{color:t.sub,fontSize:12,marginTop:6}}>Identificando funcionário, data, local e vale</p>
+        </Crd>
+      )}
+      {etapa==='preview'&&dados&&(
+        <Crd t={t}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+            <h3 style={{color:t.txt,fontSize:15,fontWeight:700}}>Confirmar Registro</h3>
+            <Bdg cor={dados.confianca>75?'green':'yellow'} t={t}>{dados.confianca}% confiança</Bdg>
+          </div>
+          {(!dados.funcionarioId||!dados.local||!dados.data)&&(
+            <div style={{background:t.warn+'14',border:`1px solid ${t.warn}40`,borderRadius:8,padding:'10px 14px',marginBottom:14,color:t.warn,fontSize:12,fontWeight:600}}>
+              ⚠ Campos incompletos — preencha antes de salvar: {[!dados.funcionarioId&&'Funcionário',!dados.local&&'Local',!dados.data&&'Data'].filter(Boolean).join(', ')}
+            </div>
+          )}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 18px'}}>
+            <div style={{marginBottom:14}}>
+              <label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>Funcionário *</label>
+              <select value={dados.funcionarioId||''} onChange={e=>{const fn=funcs.find(f=>String(f.id)===String(e.target.value));setDados(d=>({...d,funcionarioId:fn?.id||null,funcionarioNome:fn?.apelido||fn?.nome||'',diaria:fn?.diaria||0}));}}
+                style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,appearance:'none'}}>
+                <option value="">— Selecione —</option>
+                {funcs.map(f=><option key={f.id} value={f.id}>{f.apelido||f.nome}</option>)}
+              </select>
+            </div>
+            <Inp label="Data *" type="date" value={dados.data||''} onChange={e=>setDados(d=>({...d,data:e.target.value}))} t={t}/>
+          </div>
+          <div style={{marginBottom:14}}>
+            <label style={{color:t.sub,fontSize:11,fontWeight:700,display:'block',marginBottom:5,textTransform:'uppercase',letterSpacing:.5}}>Local / Obra *</label>
+            <input value={dados.local||''} onChange={e=>setDados(d=>({...d,local:e.target.value}))} list="obs-prev"
+              style={{width:'100%',background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13,boxSizing:'border-box'}}/>
+            <datalist id="obs-prev">{obras.map((o,i)=><option key={i} value={o}/>)}</datalist>
+          </div>
+          <div style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+            <p style={{color:t.sub,fontSize:10,fontWeight:700,marginBottom:10,textTransform:'uppercase',letterSpacing:.5}}>Vale</p>
+            <div style={{display:'flex',gap:8,marginBottom:dados.vale?12:0}}>
+              {[true,false].map(v=>(
+                <button key={String(v)} onClick={()=>setDados(d=>({...d,vale:v,valorVale:v?d.valorVale:0}))}
+                  style={{flex:1,padding:'9px',borderRadius:8,border:`1px solid ${dados.vale===v?(v?t.ok:t.err):t.inpB}`,cursor:'pointer',fontWeight:700,fontSize:13,background:dados.vale===v?(v?t.ok+'18':t.err+'18'):'transparent',color:dados.vale===v?(v?t.ok:t.err):t.sub}}>
+                  {v?'✓ Recebeu':'✗ Não recebeu'}
+                </button>
+              ))}
+            </div>
+            {dados.vale&&<Inp label="Valor (R$)" type="number" value={dados.valorVale||0} onChange={e=>setDados(d=>({...d,valorVale:Number(e.target.value)}))} t={t} sx={{marginBottom:0}}/>}
+          </div>
+          <div style={{background:t.ac+'0e',border:`1px solid ${t.ac}25`,borderRadius:8,padding:'12px 14px',marginBottom:16,fontSize:13,color:t.sub,lineHeight:2}}>
+            <strong style={{color:t.txt}}>👷 {dados.funcionarioNome||'—'}</strong> · 📅 {dados.data?fmtBR(dados.data):'—'} · 📍 {dados.local||'—'} · 💵 {fmtR$(dados.diaria)} · {dados.vale?`🟠 Vale: ${fmtR$(dados.valorVale)}`:'🟢 Sem vale'}
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <Btn v="ghost" t={t} onClick={()=>setEtapa('revisar')}>← Reeditar</Btn>
+            <button onClick={confirmar} disabled={!dados.funcionarioId||!dados.local||!dados.data}
+              style={{flex:1,padding:'11px',background:!dados.funcionarioId||!dados.local||!dados.data?t.hov:t.ok,border:'none',borderRadius:8,color:!dados.funcionarioId||!dados.local||!dados.data?t.sub:'#fff',fontSize:13,fontWeight:700,cursor:!dados.funcionarioId||!dados.local||!dados.data?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              <Ic n="save" s={15} c={!dados.funcionarioId||!dados.local||!dados.data?t.sub:'#fff'}/>Confirmar e Salvar
+            </button>
+          </div>
+        </Crd>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   OBRAS
+══════════════════════════════════════════════════════ */
+function Obras({obras,setObras,regs,t,toast}){
+  const [nova,setNova]=useState('');const [del,setDel]=useState(null);
+  const lista=obras.map(o=>({nome:o,regs:regs.filter(r=>r.local===o).length,total:regs.filter(r=>r.local===o).reduce((s,r)=>s+(r.diaria||0),0)})).sort((a,b)=>b.regs-a.regs);
+  const add=()=>{if(!nova.trim()||obras.includes(nova.trim())){toast('Obra já existe ou nome vazio.','err');return;}setObras(p=>[...p,nova.trim()]);setNova('');toast('Obra adicionada!','ok');};
+  return(
+    <div style={{padding:22,maxWidth:700,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      <Crd t={t} sx={{marginBottom:18}}>
+        <div style={{display:'flex',gap:10}}>
+          <input value={nova} onChange={e=>setNova(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="Nome da nova obra ou local..."
+            style={{flex:1,background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:8,padding:'9px 12px',color:t.txt,fontSize:13}}/>
+          <Btn icon="plus" t={t} onClick={add}>Adicionar</Btn>
+        </div>
+      </Crd>
+      <Crd t={t} noPad>
+        <Tbl t={t} cols={[
+          {label:'Obra / Local',fn:r=><div style={{display:'flex',alignItems:'center',gap:8}}><Ic n="pin" s={14} c={t.ac}/><span style={{color:t.txt,fontWeight:600}}>{r.nome}</span></div>},
+          {label:'Registros',fn:r=><Bdg cor="blue" t={t}>{r.regs} reg.</Bdg>},
+          {label:'Total Diárias',fn:r=><span style={{color:t.ok,fontWeight:700}}>{fmtR$(r.total)}</span>},
+          {label:'',ct:true,fn:r=>(
+            <button onClick={()=>setDel(r)} style={{background:t.err+'18',border:'none',borderRadius:7,padding:'5px 8px',cursor:'pointer',display:'flex'}}><Ic n="trash" s={13} c={t.err}/></button>
+          )},
+        ]} rows={lista}/>
+      </Crd>
+      {del&&(
+        <Mdl title="Excluir Obra" onClose={()=>setDel(null)} t={t} w={400}>
+          <p style={{color:t.sub,fontSize:13,marginBottom:20}}>Excluir "<strong style={{color:t.txt}}>{del.nome}</strong>"? Os registros vinculados não serão excluídos.</p>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+            <Btn v="ghost" t={t} onClick={()=>setDel(null)}>Cancelar</Btn>
+            <Btn v="danger" t={t} onClick={()=>{setObras(p=>p.filter(o=>o!==del.nome));toast('Obra removida.','info');setDel(null);}}>Excluir</Btn>
+          </div>
+        </Mdl>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   IMPORTAR PLANILHA — componente completo
+══════════════════════════════════════════════════════ */
+
+/* ── Baixar modelos Excel ─────────────────────────────── */
+function gerarModeloFuncionarios(){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['Nome Completo*','Apelido','Telefone','Função*','Valor Diária*','Status*','Data Admissão'],
+    ['João Silva','João','(11) 99999-0001','Pedreiro','180','ativo','2024-01-15'],
+    ['Maria Oliveira','Maria','(11) 99999-0002','Servente','150','ativo','2024-02-01'],
+    ['Carlos Santos','Carlos','','Carpinteiro','200','inativo','2023-11-10'],
+  ]);
+  ws['!cols']=[{wch:22},{wch:12},{wch:18},{wch:16},{wch:14},{wch:10},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws,'Funcionários');
+  XLSX.writeFile(wb,'modelo-funcionarios.xlsx');
+}
+
+function gerarModeloRegistros(){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['Nome Funcionário*','Data* (AAAA-MM-DD)','Local/Obra*','Entrada (HH:MM)','Saída (HH:MM)','Recebeu Vale? (sim/não)','Valor Vale','Observações'],
+    ['João Silva',hoje,'Condomínio Vista Alegre','07:00','17:00','sim','100',''],
+    ['Maria Oliveira',ontem,'Obra Rua São Paulo','07:30','17:30','não','0','Horas extras'],
+    ['Carlos Santos',d2,'Residencial das Flores','08:00','18:00','sim','150',''],
+  ]);
+  ws['!cols']=[{wch:20},{wch:20},{wch:28},{wch:16},{wch:14},{wch:22},{wch:12},{wch:24}];
+  XLSX.utils.book_append_sheet(wb,ws,'Registros');
+  XLSX.writeFile(wb,'modelo-registros.xlsx');
+}
+
+function gerarModeloPagamentos(){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ['Nome Funcionário*','Data* (AAAA-MM-DD)','Valor* (R$)','Tipo*','Observações'],
+    ['João Silva',hoje,'540','Semanal','Pagamento semana 20'],
+    ['Maria Oliveira',ontem,'450','Quinzenal',''],
+    ['Carlos Santos',d2,'800','Adiantamento','Adiantamento solicitado'],
+  ]);
+  ws['!cols']=[{wch:20},{wch:20},{wch:14},{wch:16},{wch:28}];
+  XLSX.utils.book_append_sheet(wb,ws,'Pagamentos');
+  XLSX.writeFile(wb,'modelo-pagamentos.xlsx');
+}
+
+/* ── Parser e validador de linhas ─────────────────────── */
+function normStr(v){return String(v||'').trim();}
+function normNum(v){const n=parseFloat(String(v||'0').replace(',','.'));return isNaN(n)?0:n;}
+function normData(v){
+  if(!v)return '';
+  const s=String(v).trim();
+  // XLSX às vezes entrega número serial para datas
+  if(!isNaN(Number(s))&&Number(s)>40000){
+    const d=new Date(Math.round((Number(s)-25569)*86400*1000));
+    return d.toISOString().split('T')[0];
+  }
+  // formatos BR dd/mm/aaaa
+  const br=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if(br){const[,d,m,a]=br;return`${a.length===2?'20'+a:a}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;}
+  // ISO ou parcial
+  const iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(iso)return s;
+  return s;
+}
+function normHora(v){
+  const s=String(v||'').trim();
+  if(!s)return '';
+  const m=s.match(/^(\d{1,2}):(\d{2})$/);
+  if(m)return`${m[1].padStart(2,'0')}:${m[2]}`;
+  return s;
+}
+
+function parseFuncionariosSheet(rows){
+  return rows.map((row,i)=>{
+    const erros=[];
+    const nome=normStr(row[0]||row['Nome Completo*']||row['Nome Completo']||row['nome']);
+    const apelido=normStr(row[1]||row['Apelido']||row['apelido']||'');
+    const tel=normStr(row[2]||row['Telefone']||row['telefone']||'');
+    const funcao=normStr(row[3]||row['Função*']||row['Função']||row['funcao']||row['função']||'');
+    const diaria=normNum(row[4]||row['Valor Diária*']||row['Valor Diária']||row['diaria']||0);
+    const statusRaw=normStr(row[5]||row['Status*']||row['Status']||row['status']||'ativo').toLowerCase();
+    const status=statusRaw==='inativo'?'inativo':'ativo';
+    const adm=normData(row[6]||row['Data Admissão']||row['admissao']||hoje);
+    if(!nome)erros.push('Nome obrigatório');
+    if(!funcao)erros.push('Função obrigatória');
+    if(!diaria||diaria<=0)erros.push('Diária deve ser maior que zero');
+    return{_linha:i+2,_erros:erros,_ok:erros.length===0,nome,apelido,tel,funcao,diaria,status,adm,ini:nome.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)};
+  });
+}
+
+function parseRegistrosSheet(rows,funcs){
+  return rows.map((row,i)=>{
+    const erros=[];
+    const nomeRaw=normStr(row[0]||row['Nome Funcionário*']||row['Nome Funcionário']||row['nome']||'');
+    const data=normData(row[1]||row['Data* (AAAA-MM-DD)']||row['Data']||row['data']||'');
+    const local=normStr(row[2]||row['Local/Obra*']||row['Local']||row['local']||'');
+    const entrada=normHora(row[3]||row['Entrada (HH:MM)']||row['Entrada']||row['entrada']||'');
+    const saida=normHora(row[4]||row['Saída (HH:MM)']||row['Saída']||row['saida']||'');
+    const valeRaw=normStr(row[5]||row['Recebeu Vale? (sim/não)']||row['Vale']||row['vale']||'não').toLowerCase();
+    const vale=valeRaw==='sim'||valeRaw==='s'||valeRaw==='yes'||valeRaw==='1'||valeRaw==='true';
+    const valorVale=normNum(row[6]||row['Valor Vale']||row['valorVale']||0);
+    const obs=normStr(row[7]||row['Observações']||row['obs']||'');
+    // Jornada
+    const jornadaRaw=normStr(row[8]||row['Jornada']||row['jornada']||'').toUpperCase();
+    const jornada=jornadaRaw==='MEIO_TURNO'?'MEIO_TURNO':jornadaRaw==='OUTRO'?'OUTRO':'DIA_INTEIRO';
+    // Casar funcionário
+    const fn=funcs.find(f=>f.nome.toLowerCase()===nomeRaw.toLowerCase()||(f.apelido||'').toLowerCase()===nomeRaw.toLowerCase()||f.nome.toLowerCase().includes(nomeRaw.toLowerCase()));
+    if(!nomeRaw)erros.push('Nome do funcionário obrigatório');
+    else if(!fn)erros.push(`Funcionário "${nomeRaw}" não encontrado`);
+    if(!data)erros.push('Data obrigatória');
+    if(!local)erros.push('Local/Obra obrigatório');
+    const horas=calcH(entrada,saida);
+    return{_linha:i+2,_erros:erros,_ok:erros.length===0,_nomeRaw:nomeRaw,funcId:fn?.id||null,nome:fn?.apelido||fn?.nome?.split(' ')[0]||nomeRaw,data,local,entrada,saida,horas,diaria:fn?.diaria||0,vale,valorVale:vale?valorVale:0,obs,jornada};
+  });
+}
+
+function parsePagamentosSheet(rows,funcs){
+  const TIPOS=['Semanal','Quinzenal','Mensal','Adiantamento','Acerto Final'];
+  return rows.map((row,i)=>{
+    const erros=[];
+    const nomeRaw=normStr(row[0]||row['Nome Funcionário*']||row['Nome Funcionário']||row['nome']||'');
+    const data=normData(row[1]||row['Data* (AAAA-MM-DD)']||row['Data']||row['data']||'');
+    const valor=normNum(row[2]||row['Valor* (R$)']||row['Valor']||row['valor']||0);
+    const tipoRaw=normStr(row[3]||row['Tipo*']||row['Tipo']||row['tipo']||'Semanal');
+    const tipo=TIPOS.find(t=>t.toLowerCase()===tipoRaw.toLowerCase())||tipoRaw||'Semanal';
+    const obs=normStr(row[4]||row['Observações']||row['obs']||'');
+    const fn=funcs.find(f=>f.nome.toLowerCase()===nomeRaw.toLowerCase()||(f.apelido||'').toLowerCase()===nomeRaw.toLowerCase()||f.nome.toLowerCase().includes(nomeRaw.toLowerCase()));
+    if(!nomeRaw)erros.push('Nome do funcionário obrigatório');
+    else if(!fn)erros.push(`Funcionário "${nomeRaw}" não encontrado`);
+    if(!data)erros.push('Data obrigatória');
+    if(!valor||valor<=0)erros.push('Valor deve ser maior que zero');
+    return{_linha:i+2,_erros:erros,_ok:erros.length===0,_nomeRaw:nomeRaw,funcId:fn?.id||null,nome:fn?.apelido||fn?.nome?.split(' ')[0]||nomeRaw,data,valor,tipo,obs};
+  });
+}
+
+/* ── Componente principal de importação ─────────────────── */
+function Importar({funcs,setFuncs,regs,setRegs,pags,setPags,obras,setObras,t,toast}){
+  const [etapa,setEtapa]=useState('inicio'); // inicio | processando | preview | sucesso
+  const [tipo,setTipo]=useState('registros'); // funcionarios | registros | pagamentos
+  const [arquivo,setArquivo]=useState(null);
+  const [progresso,setProgresso]=useState(0);
+  const [linhas,setLinhas]=useState([]); // todas as linhas parseadas
+  const [selecionadas,setSelecionadas]=useState([]); // ids selecionados para importar (só as ok)
+  const [historico,setHistorico]=useState([]);
+  const fileRef=useRef();
+  const dropRef=useRef();
+  const [dragOver,setDragOver]=useState(false);
+
+  const TIPOS_CONFIG={
+    funcionarios:{label:'Funcionários',    icon:'users', cor:'#3b82f6',desc:'Importar cadastro de funcionários em massa'},
+    registros:   {label:'Registros de Horas',icon:'clock',cor:'#8b5cf6',desc:'Importar dias trabalhados e vales'},
+    pagamentos:  {label:'Pagamentos',      icon:'dollar',cor:'#22c55e',desc:'Importar histórico de pagamentos'},
+  };
+
+  const processarArquivo=async(file)=>{
+    if(!file)return;
+    setArquivo(file);
+    setEtapa('processando');
+    setProgresso(0);
+
+    const timer=setInterval(()=>setProgresso(p=>Math.min(p+12,88)),80);
+    try{
+      const buf=await file.arrayBuffer();
+      clearInterval(timer);
+      setProgresso(92);
+
+      let rows=[];
+      const ext=file.name.split('.').pop().toLowerCase();
+
+      if(ext==='csv'){
+        const txt=new TextDecoder('utf-8').decode(buf);
+        const lines=txt.split(/\r?\n/).filter(l=>l.trim());
+        const header=lines[0].split(/[;,]/).map(h=>h.replace(/"/g,'').trim());
+        rows=lines.slice(1).map(line=>{
+          const vals=line.split(/[;,]/).map(v=>v.replace(/"/g,'').trim());
+          const obj={};header.forEach((h,i)=>obj[h]=vals[i]||'');
+          return obj;
+        }).filter(r=>Object.values(r).some(v=>v));
+      } else {
+        const wb=XLSX.read(buf,{type:'array',cellDates:true});
+        const wsName=wb.SheetNames[0];
+        const ws=wb.Sheets[wsName];
+        // Usar header:1 para pegar array e depois header com a primeira linha como chave
+        const rawRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        if(rawRows.length<2){toast('Planilha vazia ou sem dados.','err');setEtapa('inicio');return;}
+        const headers=rawRows[0].map(h=>String(h).trim());
+        rows=rawRows.slice(1)
+          .filter(row=>row.some(v=>v!==''&&v!==null&&v!==undefined))
+          .map(row=>{
+            const obj={};
+            // índice posicional (para planilhas de modelo)
+            row.forEach((v,i)=>{obj[i]=v;if(headers[i])obj[headers[i]]=v;});
+            return obj;
+          });
+      }
+
+      setProgresso(96);
+      let parsed=[];
+      if(tipo==='funcionarios') parsed=parseFuncionariosSheet(rows);
+      else if(tipo==='registros') parsed=parseRegistrosSheet(rows,funcs);
+      else parsed=parsePagamentosSheet(rows,funcs);
+
+      setProgresso(100);
+      setTimeout(()=>{
+        setLinhas(parsed);
+        setSelecionadas(parsed.filter(r=>r._ok).map((_,i)=>i));
+        setEtapa('preview');
+      },400);
+    }catch(e){
+      clearInterval(timer);
+      toast('Erro ao ler arquivo: '+e.message,'err');
+      setEtapa('inicio');
+    }
+  };
+
+  const onDrop=e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files[0];if(f)processarArquivo(f);};
+  const onFile=e=>{const f=e.target.files[0];if(f)processarArquivo(f);e.target.value='';};
+  const toggleSel=i=>setSelecionadas(p=>p.includes(i)?p.filter(x=>x!==i):[...p,i]);
+  const toggleTodos=()=>{const ok=linhas.map((_,i)=>i).filter(i=>linhas[i]._ok);setSelecionadas(p=>p.length===ok.length?[]:ok);};
+
+  const confirmarImportacao=()=>{
+    const okLinhas=selecionadas.map(i=>linhas[i]).filter(l=>l._ok);
+    if(okLinhas.length===0){toast('Nenhuma linha válida selecionada.','err');return;}
+
+    if(tipo==='funcionarios'){
+      const novos=okLinhas.map(l=>({...l,id:uid(),_linha:undefined,_erros:undefined,_ok:undefined}));
+      setFuncs(p=>[...p,...novos]);
+    } else if(tipo==='registros'){
+      const novos=okLinhas.map(l=>({...l,id:uid(),_linha:undefined,_erros:undefined,_ok:undefined,_nomeRaw:undefined}));
+      setRegs(p=>[...p,...novos]);
+      // Adicionar obras novas
+      const novasObras=[...new Set(okLinhas.map(l=>l.local).filter(Boolean))].filter(o=>!obras.includes(o));
+      if(novasObras.length)setObras(p=>[...p,...novasObras]);
+    } else {
+      const novos=okLinhas.map(l=>({...l,id:uid(),_linha:undefined,_erros:undefined,_ok:undefined,_nomeRaw:undefined}));
+      setPags(p=>[...p,...novos]);
+    }
+
+    const reg={id:uid(),data:new Date().toISOString(),tipo:TIPOS_CONFIG[tipo].label,total:okLinhas.length,arquivo:arquivo?.name||'',erros:linhas.filter(l=>!l._ok).length};
+    setHistorico(p=>[reg,...p]);
+    toast(`${okLinhas.length} registros importados com sucesso!`,'ok');
+    setEtapa('sucesso');
+  };
+
+  const resetar=()=>{setEtapa('inicio');setLinhas([]);setSelecionadas([]);setArquivo(null);setProgresso(0);};
+
+  // ── RENDER ────────────────────────────────────────────
+
+  const cfg=TIPOS_CONFIG[tipo];
+  const okCount=linhas.filter(l=>l._ok).length;
+  const errCount=linhas.filter(l=>!l._ok).length;
+  const selCount=selecionadas.length;
+
+  return(
+    <div style={{padding:22,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+
+      {/* ETAPA: SUCESSO */}
+      {etapa==='sucesso'&&(
+        <div style={{maxWidth:640,margin:'0 auto'}}>
+          <Crd t={t} sx={{textAlign:'center',padding:'48px 40px',marginBottom:18}}>
+            <div style={{width:72,height:72,background:t.ok+'20',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 18px'}}><Ic n="check" s={34} c={t.ok}/></div>
+            <h2 style={{color:t.txt,fontSize:22,fontWeight:800,marginBottom:8}}>Importação Concluída!</h2>
+            <p style={{color:t.sub,fontSize:13,marginBottom:6}}>Os dados foram importados e salvos automaticamente.</p>
+            <p style={{color:t.ok,fontSize:14,fontWeight:700,marginBottom:28}}>{selCount} registro(s) importado(s) com sucesso</p>
+            <div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap'}}>
+              <Btn t={t} onClick={resetar} icon="import">Nova Importação</Btn>
+              <Btn v="ghost" t={t} onClick={()=>{setEtapa('preview');}}>Ver Prévia Novamente</Btn>
+            </div>
+          </Crd>
+          {historico.length>0&&(
+            <Crd t={t} title="Histórico de Importações">
+              {historico.map((h,i)=>(
+                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:i<historico.length-1?`1px solid ${t.brd}`:'none'}}>
+                  <div>
+                    <p style={{color:t.txt,fontSize:13,fontWeight:600}}>{h.tipo}</p>
+                    <p style={{color:t.sub,fontSize:11}}>{h.arquivo} · {new Date(h.data).toLocaleString('pt-BR')}</p>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <Bdg cor="green" t={t}>{h.total} importados</Bdg>
+                    {h.erros>0&&<p style={{color:t.warn,fontSize:11,marginTop:3}}>{h.erros} com erro</p>}
+                  </div>
+                </div>
+              ))}
+            </Crd>
+          )}
+        </div>
+      )}
+
+      {/* ETAPA: PROCESSANDO */}
+      {etapa==='processando'&&(
+        <div style={{maxWidth:500,margin:'60px auto 0',textAlign:'center'}}>
+          <Crd t={t} sx={{padding:'48px 40px'}}>
+            <div style={{width:56,height:56,background:t.ac+'18',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px'}}><Ic n="refresh" s={28} c={t.ac}/></div>
+            <p style={{color:t.txt,fontSize:16,fontWeight:700,marginBottom:6}}>Processando arquivo...</p>
+            <p style={{color:t.sub,fontSize:12,marginBottom:24}}>{arquivo?.name}</p>
+            <div style={{background:t.inp,borderRadius:20,height:8,overflow:'hidden',marginBottom:10}}>
+              <div style={{height:'100%',background:`linear-gradient(90deg,${t.ac},${t.pur})`,borderRadius:20,width:`${progresso}%`,transition:'width .3s ease'}}/>
+            </div>
+            <p style={{color:t.sub,fontSize:12}}>{progresso}% — Lendo e validando dados...</p>
+          </Crd>
+        </div>
+      )}
+
+      {/* ETAPA: INÍCIO */}
+      {etapa==='inicio'&&(
+        <div style={{maxWidth:860,margin:'0 auto'}}>
+          {/* Tipo de importação */}
+          <div style={{marginBottom:22}}>
+            <p style={{color:t.sub,fontSize:12,fontWeight:700,marginBottom:10,textTransform:'uppercase',letterSpacing:.5}}>1. Selecione o tipo de dados</p>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+              {Object.entries(TIPOS_CONFIG).map(([k,v])=>(
+                <button key={k} onClick={()=>setTipo(k)}
+                  style={{padding:'16px',borderRadius:12,border:`2px solid ${tipo===k?v.cor:t.brd}`,background:tipo===k?v.cor+'14':t.card,cursor:'pointer',textAlign:'left',transition:'all .15s'}}>
+                  <div style={{background:v.cor+'20',borderRadius:8,width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',marginBottom:10}}>
+                    <Ic n={v.icon} s={18} c={v.cor}/>
+                  </div>
+                  <p style={{color:tipo===k?v.cor:t.txt,fontSize:13,fontWeight:700,marginBottom:3}}>{v.label}</p>
+                  <p style={{color:t.sub,fontSize:11,lineHeight:1.5}}>{v.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Download do modelo */}
+          <Crd t={t} sx={{marginBottom:18}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <div style={{background:'#14532d',borderRadius:10,padding:10,flexShrink:0}}><Ic n="table" s={20} c="#4ade80"/></div>
+                <div>
+                  <p style={{color:t.txt,fontSize:14,fontWeight:700}}>2. Baixe o modelo Excel</p>
+                  <p style={{color:t.sub,fontSize:12}}>Preencha o modelo com seus dados. Ele já contém exemplos e as colunas obrigatórias marcadas com *</p>
+                </div>
+              </div>
+              <button onClick={()=>{
+                if(tipo==='funcionarios')gerarModeloFuncionarios();
+                else if(tipo==='registros')gerarModeloRegistros();
+                else gerarModeloPagamentos();
+                toast('Modelo Excel baixado!','ok');
+              }} style={{padding:'10px 18px',background:'#14532d',border:'1px solid #166534',borderRadius:9,color:'#4ade80',fontSize:13,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:8,whiteSpace:'nowrap'}}>
+                <Ic n="dl" s={15} c="#4ade80"/>Baixar Modelo — {cfg.label}
+              </button>
+            </div>
+          </Crd>
+
+          {/* Zona de upload */}
+          <div
+            ref={dropRef}
+            onDrop={onDrop}
+            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+            onDragLeave={()=>setDragOver(false)}
+            onClick={()=>fileRef.current?.click()}
+            style={{border:`2px dashed ${dragOver?cfg.cor:t.brd}`,borderRadius:16,padding:'48px 32px',textAlign:'center',cursor:'pointer',background:dragOver?cfg.cor+'08':t.card,transition:'all .2s',marginBottom:18}}>
+            <div style={{width:64,height:64,background:cfg.cor+'16',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+              <Ic n="import" s={28} c={cfg.cor}/>
+            </div>
+            <p style={{color:t.txt,fontSize:16,fontWeight:700,marginBottom:6}}>3. Faça upload da sua planilha</p>
+            <p style={{color:t.sub,fontSize:13,marginBottom:16}}>Arraste e solte aqui, ou clique para selecionar</p>
+            <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+              {['.xlsx','.xls','.csv'].map(ext=><span key={ext} style={{background:t.bdg,color:t.sub,padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:600}}>{ext}</span>)}
+            </div>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={onFile}/>
+          </div>
+
+          {/* Dicas */}
+          <Crd t={t}>
+            <p style={{color:t.txt,fontSize:13,fontWeight:700,marginBottom:12}}>💡 Dicas para uma importação bem-sucedida</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              {[
+                {ic:'check',c:t.ok,  txt:'Use o modelo oficial para garantir compatibilidade das colunas'},
+                {ic:'check',c:t.ok,  txt:'Datas no formato AAAA-MM-DD (ex: 2025-05-20) ou DD/MM/AAAA'},
+                {ic:'check',c:t.ok,  txt:'Campos com * são obrigatórios e não podem ficar em branco'},
+                {ic:'check',c:t.ok,  txt:'Para registros, o nome do funcionário precisa estar cadastrado'},
+                {ic:'alert',c:t.warn,txt:'Remova linhas de cabeçalho extras antes de enviar'},
+                {ic:'alert',c:t.warn,txt:'Salve o arquivo como .xlsx — evite formatos de versão antiga .xls'},
+              ].map((d,i)=>(
+                <div key={i} style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                  <Ic n={d.ic} s={14} c={d.c}/>
+                  <span style={{color:t.sub,fontSize:12,lineHeight:1.5}}>{d.txt}</span>
+                </div>
+              ))}
+            </div>
+          </Crd>
+        </div>
+      )}
+
+      {/* ETAPA: PREVIEW */}
+      {etapa==='preview'&&(
+        <div style={{maxWidth:1100,margin:'0 auto'}}>
+          {/* Resumo */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:18}}>
+            {[
+              {l:'Total de linhas',   v:linhas.length,       c:t.txt,  ic:'table'},
+              {l:'Linhas válidas',    v:okCount,             c:t.ok,   ic:'check'},
+              {l:'Linhas com erro',   v:errCount,            c:t.err,  ic:'alert'},
+              {l:'Selecionadas p/ importar',v:selCount,      c:t.ac,   ic:'import'},
+            ].map((s,i)=>(
+              <div key={i} style={{background:t.card,border:`1px solid ${s.c}30`,borderRadius:10,padding:'14px 16px',display:'flex',alignItems:'center',gap:12}}>
+                <div style={{background:s.c+'18',borderRadius:8,padding:8,flexShrink:0}}><Ic n={s.ic} s={16} c={s.c}/></div>
+                <div><p style={{color:t.sub,fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>{s.l}</p><p style={{color:s.c,fontSize:20,fontWeight:800}}>{s.v}</p></div>
+              </div>
+            ))}
+          </div>
+
+          {errCount>0&&(
+            <div style={{background:t.err+'10',border:`1px solid ${t.err}40`,borderRadius:10,padding:'12px 16px',marginBottom:14,display:'flex',gap:10,alignItems:'flex-start'}}>
+              <Ic n="alert" s={16} c={t.err}/>
+              <div>
+                <p style={{color:t.err,fontSize:13,fontWeight:700,marginBottom:3}}>{errCount} linha(s) com erro serão ignoradas</p>
+                <p style={{color:t.sub,fontSize:12}}>Você pode corrigir a planilha e reimportar, ou importar apenas as linhas válidas selecionadas.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Tabela de prévia */}
+          <Crd t={t} noPad sx={{marginBottom:14}}>
+            <div style={{padding:'14px 18px',borderBottom:`1px solid ${t.brd}`,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+              <div>
+                <p style={{color:t.txt,fontSize:14,fontWeight:700}}>Prévia dos dados — {cfg.label}</p>
+                <p style={{color:t.sub,fontSize:12}}>Arquivo: {arquivo?.name} · Marque as linhas que deseja importar</p>
+              </div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <button onClick={()=>setEtapa('inicio')} style={{background:'transparent',border:`1px solid ${t.brd}`,borderRadius:8,padding:'7px 12px',color:t.sub,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+                  <Ic n="refresh" s={13} c={t.sub}/>Trocar arquivo
+                </button>
+                <button onClick={toggleTodos} style={{background:t.ac+'14',border:`1px solid ${t.ac}30`,borderRadius:8,padding:'7px 12px',color:t.ac,cursor:'pointer',fontSize:12,fontWeight:600}}>
+                  {selecionadas.length===okCount?'Desmarcar todos':'Selecionar todos válidos'}
+                </button>
+              </div>
+            </div>
+            <div style={{overflowX:'auto',maxHeight:420,overflowY:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead style={{position:'sticky',top:0,background:t.card,zIndex:1}}>
+                  <tr style={{borderBottom:`2px solid ${t.brd}`}}>
+                    <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5,width:40}}>✓</th>
+                    <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5,width:40}}>Linha</th>
+                    <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Status</th>
+                    {tipo==='funcionarios'&&<>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Nome</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Função</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Diária</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Status</th>
+                    </>}
+                    {tipo==='registros'&&<>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Funcionário</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Data</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Local</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Entrada</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Saída</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Horas</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Vale</th>
+                    </>}
+                    {tipo==='pagamentos'&&<>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Funcionário</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Data</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Valor</th>
+                      <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Tipo</th>
+                    </>}
+                    <th style={{padding:'9px 14px',color:t.sub,fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Erros</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhas.map((row,i)=>{
+                    const sel=selecionadas.includes(i);
+                    const bgRow=!row._ok?t.err+'08':sel?t.ok+'06':'transparent';
+                    return(
+                      <tr key={i} style={{borderBottom:`1px solid ${t.brd}`,background:bgRow,transition:'background .1s'}}
+                        onMouseEnter={e=>e.currentTarget.style.background=row._ok?t.hov:t.err+'12'}
+                        onMouseLeave={e=>e.currentTarget.style.background=bgRow}>
+                        <td style={{padding:'9px 14px',textAlign:'center'}}>
+                          {row._ok
+                            ?<input type="checkbox" checked={sel} onChange={()=>toggleSel(i)} style={{width:15,height:15,cursor:'pointer',accentColor:t.ok}}/>
+                            :<Ic n="x" s={14} c={t.err}/>}
+                        </td>
+                        <td style={{padding:'9px 14px',color:t.sub,fontSize:11}}>{row._linha}</td>
+                        <td style={{padding:'9px 14px'}}>
+                          {row._ok
+                            ?<Bdg cor="green" t={t}>✓ Válido</Bdg>
+                            :<Bdg cor="red" t={t}>✗ Erro</Bdg>}
+                        </td>
+                        {tipo==='funcionarios'&&<>
+                          <td style={{padding:'9px 14px',color:t.txt,fontWeight:600}}>{row.nome||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.sub}}>{row.funcao||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.ok,fontWeight:600}}>{row.diaria>0?fmtR$(row.diaria):'—'}</td>
+                          <td style={{padding:'9px 14px'}}><Bdg cor={row.status==='ativo'?'green':'gray'} t={t}>{row.status}</Bdg></td>
+                        </>}
+                        {tipo==='registros'&&<>
+                          <td style={{padding:'9px 14px',color:t.txt,fontWeight:600}}>{row._nomeRaw||row.nome||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.sub,fontSize:11}}>{row.data?fmtBR(row.data):'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.sub,fontSize:11,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{row.local||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.txt}}>{row.entrada||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.txt}}>{row.saida||'—'}</td>
+                          <td style={{padding:'9px 14px'}}><Bdg cor="purple" t={t}>{row.horas||0}h</Bdg></td>
+                          <td style={{padding:'9px 14px'}}>{row.vale?<Bdg cor="yellow" t={t}>{fmtR$(row.valorVale)}</Bdg>:<Bdg cor="gray" t={t}>Não</Bdg>}</td>
+                        </>}
+                        {tipo==='pagamentos'&&<>
+                          <td style={{padding:'9px 14px',color:t.txt,fontWeight:600}}>{row._nomeRaw||row.nome||'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.sub,fontSize:11}}>{row.data?fmtBR(row.data):'—'}</td>
+                          <td style={{padding:'9px 14px',color:t.ok,fontWeight:700}}>{row.valor>0?fmtR$(row.valor):'—'}</td>
+                          <td style={{padding:'9px 14px'}}><Bdg cor="blue" t={t}>{row.tipo||'—'}</Bdg></td>
+                        </>}
+                        <td style={{padding:'9px 14px',maxWidth:240}}>
+                          {row._erros.length>0
+                            ?<span style={{color:t.err,fontSize:11}}>{row._erros.join(' · ')}</span>
+                            :<span style={{color:t.ok,fontSize:11}}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Crd>
+
+          {/* Botões de ação */}
+          <div style={{display:'flex',gap:10,justifyContent:'flex-end',alignItems:'center',flexWrap:'wrap'}}>
+            <button onClick={()=>setEtapa('inicio')} style={{padding:'10px 18px',background:'transparent',border:`1px solid ${t.brd}`,borderRadius:9,color:t.sub,fontSize:13,cursor:'pointer',display:'flex',alignItems:'center',gap:8}}>
+              <Ic n="cL" s={14} c={t.sub}/>Voltar
+            </button>
+            {errCount>0&&(
+              <span style={{color:t.sub,fontSize:12,flex:1}}>
+                {errCount} linha(s) com erro serão ignoradas · {selCount} serão importadas
+              </span>
+            )}
+            <button
+              onClick={confirmarImportacao}
+              disabled={selCount===0}
+              style={{padding:'11px 24px',background:selCount===0?t.hov:`linear-gradient(135deg,${t.ac},${t.pur})`,border:'none',borderRadius:9,color:selCount===0?t.sub:'#fff',fontSize:14,fontWeight:700,cursor:selCount===0?'not-allowed':'pointer',display:'flex',alignItems:'center',gap:9,opacity:selCount===0?.6:1}}>
+              <Ic n="import" s={16} c={selCount===0?t.sub:'#fff'}/>
+              Confirmar e Importar {selCount>0?`(${selCount} registros)`:''}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   CONFIGURAÇÕES & BACKUP
+══════════════════════════════════════════════════════ */
+function Config({funcs,regs,pags,obras,onRestore,ultimoSave,t,toast}){
+  const fileRef=useRef();
+  const totalDados={funcs:funcs.length,regs:regs.length,pags:pags.length,obras:obras.length};
+  const salvoEm=ultimoSave?new Date(ultimoSave).toLocaleString('pt-BR'):'Nunca';
+  const tamanho=()=>{try{const s=localStorage.getItem(LS_KEY)||'';return(s.length/1024).toFixed(1)+' KB';}catch{return'?';}};
+
+  const doBackup=()=>{exportarBackupJSON({funcs,regs,pags,obras});toast('Backup JSON exportado!','ok');};
+  const doRestore=e=>{const f=e.target.files[0];if(!f)return;importarBackupJSON(f,dados=>{if(dados.funcs&&dados.regs){onRestore(dados);toast('Backup restaurado com sucesso!','ok');}else{toast('Arquivo de backup inválido.','err');}});e.target.value='';};
+  const limparTudo=()=>{if(!confirm('⚠️ ATENÇÃO: Isso apagará TODOS os dados permanentemente. Tem certeza?'))return;try{localStorage.removeItem(LS_KEY);}catch{}toast('Todos os dados foram apagados. Recarregue a página.','err');setTimeout(()=>window.location.reload(),2000);};
+
+  return(
+    <div style={{padding:22,maxWidth:760,overflowY:'auto',flex:1,animation:'slideIn .2s ease'}}>
+      {/* Status do armazenamento */}
+      <Crd t={t} sx={{marginBottom:18}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+          <div style={{background:t.ok+'18',borderRadius:10,padding:10}}><Ic n="shield" s={22} c={t.ok}/></div>
+          <div>
+            <p style={{color:t.txt,fontSize:15,fontWeight:700}}>Seus dados estão protegidos</p>
+            <p style={{color:t.sub,fontSize:12}}>Salvamento automático ativado no navegador</p>
+          </div>
+          <div style={{marginLeft:'auto',background:t.ok+'14',border:`1px solid ${t.ok}30`,borderRadius:8,padding:'8px 14px',display:'flex',alignItems:'center',gap:6}}>
+            <div style={{width:8,height:8,borderRadius:'50%',background:t.ok}}/>
+            <span style={{color:t.ok,fontSize:12,fontWeight:700}}>ATIVO</span>
+          </div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+          {[{l:'Funcionários',v:totalDados.funcs,ic:'users',c:t.ac},{l:'Registros',v:totalDados.regs,ic:'clock',c:t.pur},{l:'Pagamentos',v:totalDados.pags,ic:'dollar',c:t.ok},{l:'Obras',v:totalDados.obras,ic:'pin',c:t.warn}].map((i,k)=>(
+            <div key={k} style={{background:t.inp,border:`1px solid ${t.inpB}`,borderRadius:10,padding:'12px 14px',display:'flex',alignItems:'center',gap:10}}>
+              <Ic n={i.ic} s={16} c={i.c}/>
+              <div><p style={{color:t.sub,fontSize:10}}>{i.l}</p><p style={{color:i.c,fontSize:18,fontWeight:800}}>{i.v}</p></div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:20,marginTop:14,padding:'12px 0',borderTop:`1px solid ${t.brd}`}}>
+          <div><p style={{color:t.sub,fontSize:11}}>Último salvamento</p><p style={{color:t.txt,fontSize:13,fontWeight:600}}>{salvoEm}</p></div>
+          <div><p style={{color:t.sub,fontSize:11}}>Espaço utilizado</p><p style={{color:t.txt,fontSize:13,fontWeight:600}}>{tamanho()}</p></div>
+          <div><p style={{color:t.sub,fontSize:11}}>Armazenamento</p><p style={{color:t.txt,fontSize:13,fontWeight:600}}>localStorage (neste navegador)</p></div>
+        </div>
+      </Crd>
+
+      {/* Como funciona */}
+      <Crd t={t} sx={{marginBottom:18}}>
+        <h3 style={{color:t.txt,fontSize:14,fontWeight:700,marginBottom:14}}>Como seus dados são salvos</h3>
+        {[
+          {ico:'save',  cor:t.ok,  titulo:'Auto-save contínuo',       desc:'Cada ação (criar, editar, excluir) salva imediatamente no localStorage do navegador. Os dados persistem ao fechar e reabrir o navegador.'},
+          {ico:'shield',cor:t.ac,  titulo:'Dados locais e privados',   desc:'Tudo fica no seu computador, no banco de dados do navegador. Nenhum dado é enviado para servidores externos.'},
+          {ico:'alert', cor:t.warn,titulo:'Risco: limpeza do navegador',desc:'Se você limpar cookies/cache do Chrome ou reinstalar o navegador, os dados serão perdidos. Por isso, faça backups regulares.'},
+          {ico:'backup',cor:t.pur, titulo:'Backup recomendado',        desc:'Exporte um backup JSON semanalmente e salve no Google Drive, pendrive ou e-mail. Isso garante segurança total dos seus dados.'},
+        ].map((item,i)=>(
+          <div key={i} style={{display:'flex',gap:12,padding:'12px 0',borderBottom:i<3?`1px solid ${t.brd}`:'none'}}>
+            <div style={{background:item.cor+'18',borderRadius:8,padding:8,flexShrink:0,height:'fit-content'}}><Ic n={item.ico} s={16} c={item.cor}/></div>
+            <div><p style={{color:t.txt,fontSize:13,fontWeight:600,marginBottom:3}}>{item.titulo}</p><p style={{color:t.sub,fontSize:12,lineHeight:1.6}}>{item.desc}</p></div>
+          </div>
+        ))}
+      </Crd>
+
+      {/* Backup & Restaurar */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+        <Crd t={t}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+            <div style={{background:t.ok+'18',borderRadius:8,padding:8}}><Ic n="dl" s={18} c={t.ok}/></div>
+            <div><p style={{color:t.txt,fontSize:14,fontWeight:700}}>Exportar Backup</p><p style={{color:t.sub,fontSize:11}}>Arquivo JSON com todos os dados</p></div>
+          </div>
+          <p style={{color:t.sub,fontSize:12,lineHeight:1.6,marginBottom:14}}>Salva um arquivo <strong style={{color:t.txt}}>.json</strong> no seu computador com todos os funcionários, registros de trabalho, pagamentos e obras. Guarde em local seguro.</p>
+          <Btn v="success" icon="dl" t={t} sx={{width:'100%',justifyContent:'center'}} onClick={doBackup}>Exportar Backup JSON</Btn>
+        </Crd>
+        <Crd t={t}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+            <div style={{background:t.ac+'18',borderRadius:8,padding:8}}><Ic n="backup" s={18} c={t.ac}/></div>
+            <div><p style={{color:t.txt,fontSize:14,fontWeight:700}}>Restaurar Backup</p><p style={{color:t.sub,fontSize:11}}>Importar arquivo de backup anterior</p></div>
+          </div>
+          <p style={{color:t.sub,fontSize:12,lineHeight:1.6,marginBottom:14}}>Selecione um arquivo <strong style={{color:t.txt}}>.json</strong> exportado anteriormente. Os dados atuais serão <strong style={{color:t.warn}}>substituídos</strong> pelos do backup.</p>
+          <input ref={fileRef} type="file" accept=".json" style={{display:'none'}} onChange={doRestore}/>
+          <Btn v="secondary" icon="up" t={t} sx={{width:'100%',justifyContent:'center'}} onClick={()=>fileRef.current?.click()}>Carregar Arquivo de Backup</Btn>
+        </Crd>
+      </div>
+
+      {/* Excel */}
+      <Crd t={t} sx={{marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{background:'#166534',borderRadius:8,padding:8}}><Ic n="dl" s={18} c="#4ade80"/></div>
+            <div><p style={{color:t.txt,fontSize:14,fontWeight:700}}>Exportar Excel (.xlsx)</p><p style={{color:t.sub,fontSize:11}}>3 abas: Registros, Resumo por funcionário, Pagamentos</p></div>
+          </div>
+          <button onClick={()=>{try{exportXLSX(regs,funcs,pags);toast('Excel exportado!','ok');}catch{toast('Erro ao exportar.','err');}}}
+            style={{padding:'9px 18px',background:'#14532d',border:'1px solid #166534',borderRadius:8,color:'#4ade80',fontSize:13,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:8}}>
+            <Ic n="dl" s={15} c="#4ade80"/>Exportar Excel
+          </button>
+        </div>
+      </Crd>
+
+      {/* Zona de perigo */}
+      <Crd t={t} sx={{border:`1px solid ${t.err}40`,background:t.err+'06'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{background:t.err+'18',borderRadius:8,padding:8}}><Ic n="trash" s={18} c={t.err}/></div>
+            <div><p style={{color:t.err,fontSize:14,fontWeight:700}}>Zona de Perigo</p><p style={{color:t.sub,fontSize:11}}>Apagar todos os dados permanentemente</p></div>
+          </div>
+          <button onClick={limparTudo} style={{padding:'9px 18px',background:'transparent',border:`1px solid ${t.err}`,borderRadius:8,color:t.err,fontSize:13,fontWeight:700,cursor:'pointer'}}>Apagar Tudo</button>
+        </div>
+      </Crd>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   APP PRINCIPAL
+══════════════════════════════════════════════════════ */
+function App(){
+  // Carregar do localStorage na inicialização
+  const inicial=()=>{
+    const saved=carregarStorage();
+    if(saved&&saved.funcs){return saved;}
+    return{funcs:FUNC0,regs:REG0,pags:PAG0,obras:OBRAS0};
+  };
+
+  const [dark,setDark]=useState(()=>{try{return localStorage.getItem('ot_dark')!=='false';}catch{return true;}});
+  const [col,setCol]=useState(false);
+  const [pg,setPg]=useState('dash');
+  const [busca,setBusca]=useState('');
+  const [ultimoSave,setUltimoSave]=useState(null);
+  const [toasts,setToasts]=useState([]);
+
+  const init=inicial();
+  const [funcs,setFuncs]=useState(init.funcs||FUNC0);
+  const [regs,setRegs]=useState(init.regs||REG0);
+  const [pags,setPags]=useState(init.pags||PAG0);
+  const [obras,setObras]=useState(init.obras||OBRAS0);
+
+  const t=dark?DK:LT;
+
+  // Toast helper
+  const toast=useCallback((msg,type='info')=>{
+    const id=uid();
+    setToasts(p=>[...p,{id,msg,type}]);
+    setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),3500);
+  },[]);
+
+  // Auto-save sempre que dados mudam
+  useEffect(()=>{
+    const dados={funcs,regs,pags,obras};
+    salvarStorage(dados);
+    setUltimoSave(new Date().toISOString());
+  },[funcs,regs,pags,obras]);
+
+  // Salvar preferência de tema
+  useEffect(()=>{try{localStorage.setItem('ot_dark',dark);}catch{}document.body.style.background=t.bg;},[dark,t]);
+
+  const addReg=r=>{setRegs(p=>[...p,r]);if(r.local&&!obras.includes(r.local))setObras(o=>[...o,r.local]);};
+  const onRestore=dados=>{if(dados.funcs)setFuncs(dados.funcs);if(dados.regs)setRegs(dados.regs);if(dados.pags)setPags(dados.pags);if(dados.obras)setObras(dados.obras);};
+
+  return(
+    <div style={{display:'flex',height:'100vh',background:t.bg,overflow:'hidden'}}>
+      <Sidebar pg={pg} setPg={k=>{setPg(k);setBusca('');}} t={t} dark={dark} setDark={setDark} col={col} setCol={setCol} ultimoSave={ultimoSave}/>
+      <div style={{flex:1,display:'flex',flexDirection:'column',minWidth:0,overflow:'hidden'}}>
+        <Topbar t={t} pg={pg} busca={busca} setBusca={setBusca}/>
+        <div style={{flex:1,overflowY:'auto'}}>
+          {pg==='dash'  &&<Dashboard funcs={funcs} regs={regs} pags={pags} t={t} setPg={setPg}/>}
+          {pg==='funcs' &&<Funcs     funcs={funcs} setFuncs={setFuncs} regs={regs} busca={busca} t={t} toast={toast}/>}
+          {pg==='horas' &&<Horas     regs={regs} setRegs={setRegs} funcs={funcs} obras={obras} setObras={setObras} busca={busca} t={t} toast={toast}/>}
+          {pg==='pags'  &&<Pags      pags={pags} setPags={setPags} regs={regs} funcs={funcs} t={t} toast={toast}/>}
+          {pg==='rels'  &&<Rels      regs={regs} funcs={funcs} pags={pags} t={t} toast={toast}/>}
+          {pg==='audio' &&<Audio     funcs={funcs} obras={obras} setObras={setObras} onSalvar={addReg} t={t} toast={toast}/>}
+          {pg==='obras' &&<Obras     obras={obras} setObras={setObras} regs={regs} t={t} toast={toast}/>}
+          {pg==='import'&&<Importar  funcs={funcs} setFuncs={setFuncs} regs={regs} setRegs={setRegs} pags={pags} setPags={setPags} obras={obras} setObras={setObras} t={t} toast={toast}/>}
+          {pg==='config'&&<Config    funcs={funcs} regs={regs} pags={pags} obras={obras} onRestore={onRestore} ultimoSave={ultimoSave} t={t} toast={toast}/>}
+        </div>
+      </div>
+      <Toast toasts={toasts}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
